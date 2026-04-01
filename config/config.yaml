@@ -30,8 +30,12 @@ detection:
   audio_monitoring:
     enabled: true
     sample_rate: 16000
-    energy_threshold: 0.001
+    energy_threshold: 1200    # RMS threshold (int16 scale); if <=1, treated as normalized ratio
     zcr_threshold: 0.35
+    debounce_window_frames: 20
+    speech_trigger_frames: 6
+    loud_trigger_frames: 8
+    violation_cooldown_seconds: 4.0
     whisper_enabled: false  # Enable only when needed
     whisper_model: "tiny.en"
         

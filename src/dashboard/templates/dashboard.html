@@ -178,6 +178,10 @@
           <div class="label">Last Alert Time</div>
           <div class="value" id="last-alert">-</div>
         </div>
+        <div class="stat">
+          <div class="label">Voice Status</div>
+          <div class="value" id="voice-status">-</div>
+        </div>
       </div>
     </div>
 
@@ -235,6 +239,7 @@
       document.getElementById('activity').textContent = data.current_activity || '-';
       document.getElementById('probability').textContent = `${data.cheating_probability ?? '-'}%`;
       document.getElementById('last-alert').textContent = data.last_alert || '-';
+      document.getElementById('voice-status').textContent = data.voice_status || '-';
     }
 
     async function refreshAlerts() {

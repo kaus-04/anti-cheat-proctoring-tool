@@ -11,6 +11,7 @@ class AlertSystem:
         self.config = config
         self.alert_cooldown = config['logging']['alert_cooldown']
         self.last_alert_time = {}
+        self._audio_lock = threading.Lock()
         
         # Alert messages database
         self.alerts = {
@@ -38,28 +39,46 @@ class AlertSystem:
         self.last_alert_time[alert_type] = time.time()
         
         def _play_audio():
+            temp_path = None
             try:
                 if alert_type in self.alerts:
-                    # Generate speech
-                    tts = gTTS(text=self.alerts[alert_type], lang='en')
-                    
-                    # Save temporary audio file
-                    with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as fp:
-                        temp_path = fp.name
+                    # Serialize mixer access to avoid races across alert threads.
+                    with self._audio_lock:
+                        # Generate speech
+                        tts = gTTS(text=self.alerts[alert_type], lang='en')
+
+                        # Save temporary audio file
+                        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as fp:
+                            temp_path = fp.name
                         tts.save(temp_path)
-                    
-                    # Play audio
-                    pygame.mixer.music.load(temp_path)
-                    pygame.mixer.music.play()
-                    
-                    # Wait until playback finishes
-                    while pygame.mixer.music.get_busy():
-                        time.sleep(0.1)
-                    
-                    # Cleanup
-                    os.unlink(temp_path)
+
+                        # Play audio
+                        pygame.mixer.music.load(temp_path)
+                        pygame.mixer.music.play()
+
+                        # Wait until playback finishes
+                        while pygame.mixer.music.get_busy():
+                            time.sleep(0.1)
             except Exception as e:
                 print(f"Audio alert failed: {str(e)}")
+            finally:
+                # Ensure player releases handle before deleting file (important on Windows).
+                try:
+                    pygame.mixer.music.stop()
+                    try:
+                        pygame.mixer.music.unload()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+                if temp_path and os.path.exists(temp_path):
+                    for _ in range(10):
+                        try:
+                            os.unlink(temp_path)
+                            break
+                        except PermissionError:
+                            time.sleep(0.1)
         
         # Run in separate thread to avoid blocking
         threading.Thread(target=_play_audio, daemon=True).start()

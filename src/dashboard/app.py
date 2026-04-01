@@ -39,6 +39,8 @@ def _is_allowed_video(filename):
 REPORTS_DIR = _resolve_config_path(config['reporting']['output_dir'])
 IMAGES_DIR = REPORTS_DIR / "images"
 VIOLATIONS_FILE = _resolve_config_path(config['global']['output_path']) / "violations.json"
+LOG_DIR = _resolve_config_path(config['logging']['log_path'])
+VOICE_STATUS_FILE = LOG_DIR / "audio_status.json"
 SEVERITY_LEVELS = config.get('reporting', {}).get('severity_levels', {})
 
 
@@ -206,12 +208,20 @@ def get_alerts():
 
 @app.route('/api/stats')
 def get_stats():
-    # This would be more sophisticated in a real implementation
+    voice_status = "Unknown"
+    if VOICE_STATUS_FILE.exists():
+        try:
+            with open(VOICE_STATUS_FILE, "r", encoding="utf-8") as f:
+                voice_status = (json.load(f) or {}).get("voice_status", "Unknown")
+        except Exception:
+            voice_status = "Unknown"
+
     return jsonify({
         'face_detected': True,
         'current_activity': 'Normal',
         'cheating_probability': 15,
-        'last_alert': datetime.now().strftime("%H:%M:%S")
+        'last_alert': datetime.now().strftime("%H:%M:%S"),
+        'voice_status': voice_status
     })
 
 

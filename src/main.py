@@ -1,13 +1,20 @@
 import cv2
 import yaml
 import argparse
+import os
+import json
+import audioop
+import pyaudio
+import webrtcvad
+import threading
+from collections import deque
+from pathlib import Path
 from datetime import datetime
 from detection.face_detection import FaceDetector
 from detection.eye_tracking import EyeTracker
 from detection.mouth_detection import MouthMonitor
 from detection.object_detection import ObjectDetector
 from detection.multi_face import MultiFaceDetector
-from detection.audio_detection import AudioMonitor
 from utils.video_utils import VideoRecorder
 from utils.screen_capture import ScreenRecorder
 from utils.logging import AlertLogger
@@ -43,6 +50,150 @@ def parse_args():
     )
     return parser.parse_args()
 
+
+def _resolve_project_path(path_text):
+    project_root = Path(__file__).resolve().parent.parent
+    path_obj = Path(path_text)
+    return str(path_obj if path_obj.is_absolute() else (project_root / path_obj))
+
+
+def _safe_int_threshold(value, default_value):
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return default_value
+    if numeric <= 1.0:
+        return int(numeric * 32768)
+    return int(numeric)
+
+
+def _update_voice_state(audio_state, lock, status, status_file, details=None):
+    payload = {
+        "voice_status": status,
+        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "details": details or ""
+    }
+    with lock:
+        audio_state["voice_status"] = status
+        audio_state["updated_at"] = payload["updated_at"]
+        audio_state["details"] = payload["details"]
+
+    try:
+        os.makedirs(os.path.dirname(status_file), exist_ok=True)
+        with open(status_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+    except Exception:
+        pass
+
+
+def start_audio_monitor_thread(config, alert_system, alert_logger, violation_logger, audio_state, state_lock):
+    audio_cfg = config["detection"]["audio_monitoring"]
+    if not audio_cfg.get("enabled", False):
+        return None, None
+
+    stop_event = threading.Event()
+    status_file = os.path.join(_resolve_project_path(config["logging"]["log_path"]), "audio_status.json")
+
+    def _audio_worker():
+        sample_rate = 16000
+        frame_ms = 30
+        frame_samples = int(sample_rate * frame_ms / 1000)
+        chunk_bytes = frame_samples * 2  # int16 mono => 2 bytes/sample
+
+        vad = webrtcvad.Vad(3)
+        pa = pyaudio.PyAudio()
+
+        energy_threshold = _safe_int_threshold(
+            audio_cfg.get("energy_threshold", 1200),
+            1200
+        )
+        debounce_window = int(audio_cfg.get("debounce_window_frames", 20))
+        speech_trigger_frames = int(audio_cfg.get("speech_trigger_frames", 6))
+        loud_trigger_frames = int(audio_cfg.get("loud_trigger_frames", 8))
+        violation_cooldown = float(audio_cfg.get("violation_cooldown_seconds", 4.0))
+
+        speech_buffer = deque(maxlen=max(debounce_window, 1))
+        loud_buffer = deque(maxlen=max(debounce_window, 1))
+        last_violation_time = 0.0
+
+        _update_voice_state(audio_state, state_lock, "Listening", status_file, "Audio monitor ready")
+
+        try:
+            stream = pa.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=sample_rate,
+                input=True,
+                frames_per_buffer=frame_samples
+            )
+        except Exception as e:
+            _update_voice_state(audio_state, state_lock, "Error", status_file, f"Mic open failed: {e}")
+            pa.terminate()
+            return
+
+        try:
+            while not stop_event.is_set():
+                try:
+                    frame = stream.read(frame_samples, exception_on_overflow=False)
+                except Exception:
+                    continue
+
+                if len(frame) < chunk_bytes:
+                    continue
+
+                # Strict speech signal using VAD mode 3.
+                try:
+                    is_speech = vad.is_speech(frame, sample_rate)
+                except Exception:
+                    is_speech = False
+
+                # Loud non-speech detection for sudden noise spikes.
+                rms_energy = audioop.rms(frame, 2)
+                is_loud_noise = (rms_energy >= energy_threshold) and (not is_speech)
+
+                speech_buffer.append(1 if is_speech else 0)
+                loud_buffer.append(1 if is_loud_noise else 0)
+
+                sustained_speech = sum(speech_buffer) >= speech_trigger_frames
+                sustained_loud = sum(loud_buffer) >= loud_trigger_frames
+
+                if sustained_speech or sustained_loud:
+                    now_ts = datetime.now()
+                    now_epoch = now_ts.timestamp()
+                    if now_epoch - last_violation_time >= violation_cooldown:
+                        last_violation_time = now_epoch
+                        event_kind = "speech" if sustained_speech else "loud_noise"
+
+                        violation_logger.log_violation(
+                            "AUDIO_DETECTED",
+                            now_ts.strftime("%Y%m%d_%H%M%S_%f"),
+                            {
+                                "event_kind": event_kind,
+                                "rms_energy": rms_energy,
+                                "energy_threshold": energy_threshold
+                            }
+                        )
+                        if alert_logger:
+                            alert_logger.log_alert("AUDIO_DETECTED", f"Sustained audio detected ({event_kind})")
+                        if alert_system:
+                            alert_system.speak_alert("VOICE_DETECTED")
+
+                    _update_voice_state(audio_state, state_lock, "Detected", status_file, f"RMS={rms_energy}")
+                else:
+                    _update_voice_state(audio_state, state_lock, "Listening", status_file, f"RMS={rms_energy}")
+        finally:
+            try:
+                stream.stop_stream()
+                stream.close()
+            except Exception:
+                pass
+            pa.terminate()
+            _update_voice_state(audio_state, state_lock, "Stopped", status_file, "Audio monitor stopped")
+
+    thread = threading.Thread(target=_audio_worker, daemon=True)
+    thread.start()
+    return thread, stop_event
+
 def display_detection_results(frame, results):
     y_offset = 30
     line_height = 30
@@ -52,7 +203,8 @@ def display_detection_results(frame, results):
         f"Face: {'Present' if results['face_present'] else 'Absent'}",
         f"Gaze: {results['gaze_direction']}",
         f"Eyes: {'Open' if results['eye_ratio'] > 0.25 else 'Closed'}",
-        f"Mouth: {'Moving' if results['mouth_moving'] else 'Still'}"
+        f"Mouth: {'Moving' if results['mouth_moving'] else 'Still'}",
+        f"Voice: {results.get('voice_status', 'Listening')}"
     ]
     
     # Alert indicators
@@ -109,15 +261,27 @@ def main(cli_args=None):
     video_recorder = VideoRecorder(config)
     screen_recorder = ScreenRecorder(config)
     
-    # Initialize audio monitor
-    audio_monitor = AudioMonitor(config)
-    audio_monitor.alert_system = alert_system
-    audio_monitor.alert_logger = alert_logger
+    # Initialize real-time audio monitoring state
+    audio_state = {
+        "voice_status": "Disabled",
+        "updated_at": None,
+        "details": ""
+    }
+    audio_state_lock = threading.Lock()
+    audio_thread = None
+    audio_stop_event = None
 
     cap = None
 
     if config['detection']['audio_monitoring'].get('enabled', False):
-        audio_monitor.start()
+        audio_thread, audio_stop_event = start_audio_monitor_thread(
+            config,
+            alert_system,
+            alert_logger,
+            violation_logger,
+            audio_state,
+            audio_state_lock
+        )
 
     try:
         if config['screen']['recording']:
@@ -153,6 +317,7 @@ def main(cli_args=None):
                 'mouth_moving': False,
                 'multiple_faces': False,
                 'objects_detected': False,
+                'voice_status': 'Listening',
                 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             
@@ -162,6 +327,8 @@ def main(cli_args=None):
             results['mouth_moving'] = detectors[2].monitor_mouth(frame)
             results['multiple_faces'] = detectors[3].detect_multiple_faces(frame)
             results['objects_detected'] = detectors[4].detect_objects(frame)
+            with audio_state_lock:
+                results['voice_status'] = audio_state.get('voice_status', 'Listening')
 
             if not results['face_present']:
                 violation_type = "FACE_DISAPPEARED"
@@ -241,6 +408,11 @@ def main(cli_args=None):
                     break
                 
     finally:
+        if audio_stop_event is not None:
+            audio_stop_event.set()
+        if audio_thread is not None and audio_thread.is_alive():
+            audio_thread.join(timeout=2)
+
         violations = violation_logger.get_violations()
         report_path = report_generator.generate_report(student_info, violations)
         if report_path:
