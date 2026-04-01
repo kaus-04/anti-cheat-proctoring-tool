@@ -11,6 +11,8 @@
       --text: #1f2937;
       --muted: #6b7280;
       --accent: #0f766e;
+      --accent2: #2563eb;
+      --accent3: #ea580c;
       --border: #e5e7eb;
     }
     * { box-sizing: border-box; }
@@ -33,7 +35,7 @@
       border-radius: 10px;
       padding: 16px;
     }
-    h1, h2 { margin: 0 0 10px; }
+    h1, h2, h3 { margin: 0 0 10px; }
     .muted { color: var(--muted); }
     .stats {
       display: grid;
@@ -47,6 +49,101 @@
     }
     .label { font-size: 12px; color: var(--muted); }
     .value { font-size: 20px; font-weight: 700; color: var(--accent); }
+    .grid-2 {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    input[type="file"] {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+      width: 100%;
+      max-width: 420px;
+    }
+    button, .btn-link {
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .btn-secondary {
+      background: var(--accent2);
+    }
+    button:disabled, .btn-link.disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .status {
+      margin-top: 10px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    pre {
+      background: #0b1020;
+      color: #d6deff;
+      border-radius: 8px;
+      padding: 12px;
+      overflow: auto;
+      max-height: 260px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .image-box {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      min-height: 260px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .image-box img {
+      width: 100%;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      object-fit: contain;
+      max-height: 320px;
+      background: #fff;
+    }
+    .chart-box {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      min-height: 220px;
+    }
+    .bar-row {
+      display: grid;
+      grid-template-columns: 150px 1fr 44px;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0;
+      font-size: 13px;
+    }
+    .bar-bg {
+      background: #e5e7eb;
+      border-radius: 999px;
+      overflow: hidden;
+      height: 16px;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 999px;
+    }
+    .hidden { display: none; }
     ul {
       margin: 0;
       padding-left: 18px;
@@ -80,6 +177,44 @@
         <div class="stat">
           <div class="label">Last Alert Time</div>
           <div class="value" id="last-alert">-</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Analyze Recorded Video</h2>
+      <div class="row">
+        <input type="file" id="video-file" accept=".mp4,.avi,.mov,.mkv,.webm">
+        <button id="upload-btn" type="button">Upload And Analyze</button>
+        <a id="download-report-btn" class="btn-link btn-secondary disabled" href="#" download>Download Latest Report</a>
+      </div>
+      <div class="status" id="job-status">No analysis running.</div>
+      <div class="status" id="report-path"></div>
+      <pre id="job-log">Logs will appear here after upload.</pre>
+    </div>
+
+    <div class="card">
+      <h2>Report Visualizations</h2>
+      <div class="grid-2">
+        <div class="image-box">
+          <h3>Activity Timeline</h3>
+          <img id="timeline-image" class="hidden" alt="Activity timeline visualization">
+          <div id="timeline-empty" class="muted">No timeline image available yet.</div>
+        </div>
+        <div class="image-box">
+          <h3>Violation Heatmap</h3>
+          <img id="heatmap-image" class="hidden" alt="Violation heatmap visualization">
+          <div id="heatmap-empty" class="muted">No heatmap image available yet.</div>
+        </div>
+      </div>
+      <div class="grid-2" style="margin-top: 16px;">
+        <div class="chart-box">
+          <h3>Violation Type Frequency</h3>
+          <div id="type-frequency-chart" class="muted">No data yet.</div>
+        </div>
+        <div class="chart-box">
+          <h3>Violations By Minute</h3>
+          <div id="minute-trend-chart" class="muted">No data yet.</div>
         </div>
       </div>
     </div>
@@ -125,8 +260,153 @@
       await Promise.all([refreshStats(), refreshAlerts()]);
     }
 
-    refreshAll();
-    setInterval(refreshAll, 3000);
+    let currentJobId = null;
+    let jobPollTimer = null;
+
+    function setDownloadButton(url) {
+      const btn = document.getElementById('download-report-btn');
+      if (url) {
+        btn.href = url;
+        btn.classList.remove('disabled');
+      } else {
+        btn.href = '#';
+        btn.classList.add('disabled');
+      }
+    }
+
+    function renderBars(containerId, labels, values, color) {
+      const container = document.getElementById(containerId);
+      container.innerHTML = '';
+      if (!labels.length) {
+        container.className = 'muted';
+        container.textContent = 'No data yet.';
+        return;
+      }
+      container.className = '';
+
+      const maxVal = Math.max(...values, 1);
+      labels.forEach((label, i) => {
+        const val = values[i];
+        const row = document.createElement('div');
+        row.className = 'bar-row';
+        row.innerHTML = `
+          <div>${label}</div>
+          <div class="bar-bg"><div class="bar-fill" style="width:${(val / maxVal) * 100}%;background:${color};"></div></div>
+          <div style="text-align:right">${val}</div>
+        `;
+        container.appendChild(row);
+      });
+    }
+
+    function setImage(elId, emptyId, url) {
+      const img = document.getElementById(elId);
+      const empty = document.getElementById(emptyId);
+      if (url) {
+        img.src = `${url}?t=${Date.now()}`;
+        img.classList.remove('hidden');
+        empty.classList.add('hidden');
+      } else {
+        img.classList.add('hidden');
+        empty.classList.remove('hidden');
+      }
+    }
+
+    async function refreshArtifacts() {
+      const res = await fetch('/api/artifacts');
+      const payload = await res.json();
+      if (!payload.ok) return;
+      const artifacts = payload.artifacts || {};
+      setDownloadButton(artifacts.latest_report ? artifacts.latest_report.download_url : null);
+      setImage('timeline-image', 'timeline-empty', artifacts.timeline_image_url);
+      setImage('heatmap-image', 'heatmap-empty', artifacts.heatmap_image_url);
+    }
+
+    async function refreshVisualizations() {
+      const res = await fetch('/api/violations-summary');
+      const payload = await res.json();
+      if (!payload.ok) return;
+      const summary = payload.summary || {};
+      const byType = summary.by_type || {};
+      const typeLabels = Object.keys(byType);
+      const typeValues = typeLabels.map((k) => byType[k]);
+      renderBars('type-frequency-chart', typeLabels, typeValues, 'var(--accent)');
+
+      const minute = summary.violations_by_minute || { labels: [], values: [] };
+      renderBars('minute-trend-chart', minute.labels, minute.values, 'var(--accent3)');
+    }
+
+    function renderJob(job) {
+      const statusEl = document.getElementById('job-status');
+      const reportEl = document.getElementById('report-path');
+      const logEl = document.getElementById('job-log');
+
+      statusEl.textContent = `Status: ${job.status}`;
+      reportEl.textContent = job.report_path ? `Report: ${job.report_path}` : '';
+      setDownloadButton(job.report_download_url || null);
+      logEl.textContent = (job.log_tail && job.log_tail.length)
+        ? job.log_tail.join('\n')
+        : 'No logs yet.';
+    }
+
+    async function pollJob() {
+      if (!currentJobId) return;
+      const res = await fetch(`/api/job/${currentJobId}`);
+      const payload = await res.json();
+      if (!payload.ok) return;
+      const job = payload.job;
+      renderJob(job);
+      if (job.status === 'completed' || job.status === 'failed') {
+        clearInterval(jobPollTimer);
+        jobPollTimer = null;
+        document.getElementById('upload-btn').disabled = false;
+        await Promise.all([refreshArtifacts(), refreshVisualizations()]);
+      }
+    }
+
+    async function uploadAndAnalyze() {
+      const input = document.getElementById('video-file');
+      const button = document.getElementById('upload-btn');
+      const statusEl = document.getElementById('job-status');
+
+      if (!input.files || !input.files.length) {
+        statusEl.textContent = 'Please choose a video file first.';
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('video', input.files[0]);
+
+      button.disabled = true;
+      statusEl.textContent = 'Uploading...';
+
+      const res = await fetch('/api/upload-video', {
+        method: 'POST',
+        body: formData
+      });
+      const payload = await res.json();
+
+      if (!payload.ok) {
+        statusEl.textContent = `Upload failed: ${payload.error || 'Unknown error'}`;
+        button.disabled = false;
+        return;
+      }
+
+      currentJobId = payload.job_id;
+      statusEl.textContent = `Job queued: ${currentJobId}`;
+
+      if (jobPollTimer) clearInterval(jobPollTimer);
+      await pollJob();
+      jobPollTimer = setInterval(pollJob, 2000);
+    }
+
+    document.getElementById('upload-btn').addEventListener('click', uploadAndAnalyze);
+
+    async function refreshDashboard() {
+      await Promise.all([refreshAll(), refreshArtifacts(), refreshVisualizations()]);
+    }
+
+    refreshDashboard();
+    setInterval(refreshDashboard, 5000);
   </script>
 </body>
 </html>

@@ -141,6 +141,47 @@ video:
   source: "C:/path/to/interview_recording.mp4"
 ```
 
+## Command Line Interface (CLI) Usage
+
+The `main.py` script supports command-line arguments for flexible execution, including batch processing and server-side analysis. 
+
+### Basic Usage
+To run the detection system on a specific video file or webcam:
+```bash
+python src/main.py --source <path_or_index>
+```
+
+### Headless & Batch Analysis
+For dashboard integrations, automated testing, or running on servers without a display, you can use the headless and silent flags. This ensures the script runs entirely in the background without triggering UI windows or audio alerts.
+
+**Example: Running a background job from a dashboard**
+```bash
+python src/main.py --source uploads/interview_recording.mp4 --headless --disable-audio --no-screen-recording
+```
+
+### Available Arguments
+
+| Argument | Description |
+| :--- | :--- |
+| `--source` | **(Required)** The input source. Use an integer (e.g., `0`) for the default webcam, or provide a string path to a video file (e.g., `video.mp4`). |
+| `--headless` | Runs the analysis without a Graphical User Interface (GUI). Disables OpenCV video display windows. Required for server-side or background execution. |
+| `--disable-audio` | Mutes all system audio alerts (e.g., text-to-speech warnings). Useful for silent batch processing. |
+| `--no-screen-recording` | Disables the screen capture functionality. Improves performance when only analyzing pre-recorded video files. |
+
+## Start Fresh For New Candidate
+
+Before analyzing a new candidate, you can clear previously generated artifacts (reports, logs, recordings, uploads, violation captures) with:
+
+```bash
+python scripts/reset_candidate_session.py --yes
+```
+
+Preview what will be deleted without deleting anything:
+
+```bash
+python scripts/reset_candidate_session.py --dry-run
+```
+
 ## Troubleshooting
 Problem: Eye detection working, but not perfect
 

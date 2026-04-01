@@ -1,5 +1,6 @@
 import cv2
 import yaml
+import argparse
 from datetime import datetime
 from detection.face_detection import FaceDetector
 from detection.eye_tracking import EyeTracker
@@ -19,6 +20,28 @@ from reporting.report_generator import ReportGenerator
 def load_config():
     with open('config/config.yaml') as f:
         return yaml.safe_load(f)
+
+
+def _parse_video_source(source_value):
+    if source_value is None:
+        return None
+    if isinstance(source_value, int):
+        return source_value
+    source_text = str(source_value).strip()
+    return int(source_text) if source_text.isdigit() else source_text
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Exam cheating detection")
+    parser.add_argument("--source", help="Video source index (e.g. 0) or file path")
+    parser.add_argument("--headless", action="store_true", help="Disable OpenCV preview window")
+    parser.add_argument("--disable-audio", action="store_true", help="Disable audio monitoring")
+    parser.add_argument(
+        "--no-screen-recording",
+        action="store_true",
+        help="Disable screen recording for this run"
+    )
+    return parser.parse_args()
 
 def display_detection_results(frame, results):
     y_offset = 30
@@ -56,8 +79,18 @@ def display_detection_results(frame, results):
                (frame.shape[1] - 250, 30), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-def main():
+def main(cli_args=None):
     config = load_config()
+    args = cli_args or parse_args()
+
+    source_override = _parse_video_source(args.source)
+    if source_override is not None:
+        config['video']['source'] = source_override
+    if args.no_screen_recording:
+        config['screen']['recording'] = False
+    if args.disable_audio:
+        config['detection']['audio_monitoring']['enabled'] = False
+
     alert_logger = AlertLogger(config)
     alert_system = AlertSystem(config)
     violation_capturer = ViolationCapturer(config)
@@ -201,10 +234,11 @@ def main():
             display_detection_results(frame, results)
             video_recorder.record_frame(frame)
             
-            # Show preview
-            cv2.imshow('Exam Proctoring', frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            # Show preview only in interactive mode
+            if not args.headless:
+                cv2.imshow('Exam Proctoring', frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
                 
     finally:
         violations = violation_logger.get_violations()
@@ -229,7 +263,8 @@ def main():
         
         if cap is not None and cap.isOpened():
             cap.release()
-        cv2.destroyAllWindows()
+        if not args.headless:
+            cv2.destroyAllWindows()
 
 
 if __name__ == '__main__':
