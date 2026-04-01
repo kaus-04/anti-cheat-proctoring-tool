@@ -326,11 +326,24 @@ def main(cli_args=None):
             results['gaze_direction'], results['eye_ratio'] = detectors[1].track_eyes(frame)
             results['mouth_moving'] = detectors[2].monitor_mouth(frame)
             results['multiple_faces'] = detectors[3].detect_multiple_faces(frame)
-            results['objects_detected'] = detectors[4].detect_objects(frame)
+            results['objects_detected'] = detectors[4].detect_objects(frame, visualize=not args.headless)
             with audio_state_lock:
                 results['voice_status'] = audio_state.get('voice_status', 'Listening')
 
-            if not results['face_present']:
+            if results['objects_detected']:
+                violation_type = "OBJECT_DETECTED"
+                alert_system.speak_alert(violation_type)
+                
+                # Capture and log violation
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                violation_image = violation_capturer.capture_violation(frame, violation_type, timestamp)
+                violation_logger.log_violation(
+                    violation_type,
+                    timestamp,
+                    {'duration': '5+ seconds', 'frame': results}
+                )
+                # alert_system.speak_alert("OBJECT_DETECTED")
+            elif not results['face_present']:
                 violation_type = "FACE_DISAPPEARED"
                 alert_system.speak_alert(violation_type)
                 
@@ -356,19 +369,6 @@ def main(cli_args=None):
                     {'duration': '5+ seconds', 'frame': results}
                 )
                 # alert_system.speak_alert("MULTIPLE_FACES")
-            elif results['objects_detected']:
-                violation_type = "OBJECT_DETECTED"
-                alert_system.speak_alert(violation_type)
-                
-                # Capture and log violation
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                violation_image = violation_capturer.capture_violation(frame, violation_type, timestamp)
-                violation_logger.log_violation(
-                    violation_type,
-                    timestamp,
-                    {'duration': '5+ seconds', 'frame': results}
-                )
-                # alert_system.speak_alert("OBJECT_DETECTED")
             # elif results['gaze_direction'] != "Center":
             #     violation_type = "GAZE_AWAY"
             #     alert_system.speak_alert(violation_type)
