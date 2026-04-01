@@ -134,6 +134,13 @@ mouth:
   movement_threshold: 3  # consecutive frames of mouth movement
 ```
 
+### Analyze a prerecorded file by setting:
+
+```
+video:
+  source: "C:/path/to/interview_recording.mp4"
+```
+
 ## Troubleshooting
 Problem: Eye detection working, but not perfect
 
