@@ -3,6 +3,7 @@ import mediapipe as mp
 import numpy as np
 from datetime import datetime
 import importlib
+from collections import deque
 
 
 def _get_face_mesh_module():
@@ -54,6 +55,14 @@ class EyeTracker:
         # Landmark indices for left and right eyes
         self.LEFT_EYE_INDICES = [33, 160, 158, 133, 153, 144]
         self.RIGHT_EYE_INDICES = [362, 385, 387, 263, 373, 380]
+        self.LEFT_EYE_CORNERS = (33, 133)
+        self.RIGHT_EYE_CORNERS = (362, 263)
+        # Iris landmarks (requires refine_landmarks=True).
+        self.LEFT_IRIS_INDICES = [474, 475, 476, 477]
+        self.RIGHT_IRIS_INDICES = [469, 470, 471, 472]
+        self.iris_history = deque(maxlen=5)
+        self.head_history = deque(maxlen=5)
+        self.fused_history = deque(maxlen=5)
         
         # For EAR (Eye Aspect Ratio) calculation
         self.EYE_ASPECT_RATIO_THRESH = 0.3
@@ -75,6 +84,28 @@ class EyeTracker:
         # Compute the eye aspect ratio
         ear = (A + B) / (2.0 * C)
         return ear
+
+    def _landmark_xy(self, face_landmarks, idx, frame_w, frame_h):
+        lm = face_landmarks.landmark[idx]
+        return np.array([lm.x * frame_w, lm.y * frame_h], dtype=np.float32)
+
+    def _iris_horizontal_ratio(self, face_landmarks, iris_indices, eye_corners, frame_w, frame_h):
+        iris_points = np.array(
+            [self._landmark_xy(face_landmarks, i, frame_w, frame_h) for i in iris_indices],
+            dtype=np.float32
+        )
+        iris_center_x = float(np.mean(iris_points[:, 0]))
+
+        c1 = self._landmark_xy(face_landmarks, eye_corners[0], frame_w, frame_h)
+        c2 = self._landmark_xy(face_landmarks, eye_corners[1], frame_w, frame_h)
+        min_x = float(min(c1[0], c2[0]))
+        max_x = float(max(c1[0], c2[0]))
+        width = max_x - min_x
+        if width < 1e-6:
+            return 0.5
+
+        ratio = (iris_center_x - min_x) / width
+        return float(np.clip(ratio, 0.0, 1.0))
 
     def track_eyes(self, frame):
         if not self.enabled or self.face_mesh is None:
@@ -105,23 +136,53 @@ class EyeTracker:
             right_ear = self._calculate_ear(right_eye_coords)
             self.eye_ratio = (left_ear + right_ear) / 2.0
             
-            # Calculate gaze direction based on eye position
+            # Head-pose cue (normalized): positive -> right, negative -> left.
             left_eye_center = np.mean(left_eye_coords, axis=0)
             right_eye_center = np.mean(right_eye_coords, axis=0)
-            
-            # Calculate horizontal difference between eye centers and nose
-            nose_tip = np.array([face_landmarks.landmark[4].x * frame_w,
-                                face_landmarks.landmark[4].y * frame_h])
-            
-            left_diff = left_eye_center[0] - nose_tip[0]
-            right_diff = right_eye_center[0] - nose_tip[0]
-            horiz_diff = (left_diff + right_diff) / 2.0
-            
-            # Determine gaze direction
+            eye_mid_x = float((left_eye_center[0] + right_eye_center[0]) / 2.0)
+            inter_eye_dist = float(np.linalg.norm(left_eye_center - right_eye_center))
+            nose_tip_x = float(face_landmarks.landmark[4].x * frame_w)
+            head_score = 0.0
+            if inter_eye_dist > 1e-6:
+                head_score = (eye_mid_x - nose_tip_x) / inter_eye_dist
+            self.head_history.append(head_score)
+            smooth_head = float(np.mean(self.head_history))
+
+            # Iris cue (normalized): centered near 0, side gaze moves away from 0.
+            iris_score = 0.0
+            try:
+                left_ratio = self._iris_horizontal_ratio(
+                    face_landmarks,
+                    self.LEFT_IRIS_INDICES,
+                    self.LEFT_EYE_CORNERS,
+                    frame_w,
+                    frame_h
+                )
+                right_ratio = self._iris_horizontal_ratio(
+                    face_landmarks,
+                    self.RIGHT_IRIS_INDICES,
+                    self.RIGHT_EYE_CORNERS,
+                    frame_w,
+                    frame_h
+                )
+                avg_ratio = (left_ratio + right_ratio) / 2.0
+                iris_score = avg_ratio - 0.5
+            except Exception:
+                # Keep iris contribution neutral if iris landmarks are unavailable.
+                iris_score = 0.0
+
+            self.iris_history.append(iris_score)
+            smooth_iris = float(np.mean(self.iris_history))
+
+            # Fuse both: head has slightly higher weight for stability.
+            fused_score = (0.6 * smooth_head) + (0.4 * smooth_iris)
+            self.fused_history.append(fused_score)
+            smooth_fused = float(np.mean(self.fused_history))
+
             new_gaze = "center"
-            if horiz_diff < -15:  # Looking left
+            if smooth_fused < -0.08:
                 new_gaze = "left"
-            elif horiz_diff > 15:  # Looking right
+            elif smooth_fused > 0.08:
                 new_gaze = "right"
             
             # Update gaze changes
