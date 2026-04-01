@@ -135,7 +135,7 @@ mouth:
 ```
 
 ### Analyze a prerecorded file by setting:
-
+in the **config.yaml** file
 ```
 video:
   source: "C:/path/to/interview_recording.mp4"
