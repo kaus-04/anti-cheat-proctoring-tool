@@ -135,3 +135,6 @@ reports/
 # Config files (except default templates)
 config/alerts.yaml
 # config/config.yaml
+
+# no need to commit video files
+uploads/*
