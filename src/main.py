@@ -4,8 +4,8 @@ import argparse
 import os
 import json
 import audioop
-import pyaudio
-import webrtcvad
+import pyaudio # type: ignore
+import webrtcvad # type: ignore
 import threading
 from collections import deque
 from pathlib import Path
