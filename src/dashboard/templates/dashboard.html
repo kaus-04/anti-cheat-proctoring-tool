@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Exam Monitoring Dashboard</title>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --accent: #0f766e;
+      --border: #e5e7eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      display: grid;
+      gap: 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    h1, h2 { margin: 0 0 10px; }
+    .muted { color: var(--muted); }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+    }
+    .stat {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .label { font-size: 12px; color: var(--muted); }
+    .value { font-size: 20px; font-weight: 700; color: var(--accent); }
+    ul {
+      margin: 0;
+      padding-left: 18px;
+      max-height: 300px;
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Exam Monitoring Dashboard</h1>
+      <p class="muted">Live summary of alerts and detection status.</p>
+    </div>
+
+    <div class="card">
+      <h2>Current Stats</h2>
+      <div class="stats">
+        <div class="stat">
+          <div class="label">Face Detected</div>
+          <div class="value" id="face-detected">-</div>
+        </div>
+        <div class="stat">
+          <div class="label">Current Activity</div>
+          <div class="value" id="activity">-</div>
+        </div>
+        <div class="stat">
+          <div class="label">Cheating Probability</div>
+          <div class="value" id="probability">-</div>
+        </div>
+        <div class="stat">
+          <div class="label">Last Alert Time</div>
+          <div class="value" id="last-alert">-</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Recent Alerts</h2>
+      <ul id="alerts-list">
+        <li class="muted">No alerts yet.</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    async function refreshStats() {
+      const res = await fetch('/api/stats');
+      const data = await res.json();
+      document.getElementById('face-detected').textContent = data.face_detected ? 'Yes' : 'No';
+      document.getElementById('activity').textContent = data.current_activity || '-';
+      document.getElementById('probability').textContent = `${data.cheating_probability ?? '-'}%`;
+      document.getElementById('last-alert').textContent = data.last_alert || '-';
+    }
+
+    async function refreshAlerts() {
+      const res = await fetch('/api/alerts');
+      const alerts = await res.json();
+      const list = document.getElementById('alerts-list');
+      list.innerHTML = '';
+      if (!alerts.length) {
+        const li = document.createElement('li');
+        li.className = 'muted';
+        li.textContent = 'No alerts yet.';
+        list.appendChild(li);
+        return;
+      }
+      alerts.forEach((alert) => {
+        const li = document.createElement('li');
+        li.textContent = alert;
+        list.appendChild(li);
+      });
+    }
+
+    async function refreshAll() {
+      await Promise.all([refreshStats(), refreshAlerts()]);
+    }
+
+    refreshAll();
+    setInterval(refreshAll, 3000);
+  </script>
+</body>
+</html>

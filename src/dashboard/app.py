@@ -2,11 +2,16 @@ from flask import Flask, render_template, jsonify
 import os
 import yaml
 from datetime import datetime
+from pathlib import Path
 
-app = Flask(__name__)
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent.parent
+TEMPLATES_DIR = BASE_DIR / "templates"
+
+app = Flask(__name__, template_folder=str(TEMPLATES_DIR))
 
 # Load configuration
-with open('config/config.yaml') as f:
+with open(PROJECT_ROOT / 'config' / 'config.yaml') as f:
     config = yaml.safe_load(f)
 
 @app.route('/')
