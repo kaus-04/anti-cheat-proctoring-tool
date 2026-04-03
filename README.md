@@ -192,6 +192,13 @@ Preview what will be deleted without deleting anything:
 ```bash
 python scripts/reset_candidate_session.py --dry-run
 ```
+## Interview mode
+
+Disables mouth movement and voice detection for interview environment
+
+```bash
+python src/main.py --mode interview
+```
 
 ## Troubleshooting
 Problem: Eye detection working, but not perfect
