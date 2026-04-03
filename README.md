@@ -57,6 +57,9 @@ video:
   fps: 30
   recording_path: "./recordings"
 
+session:
+  mode: "exam"                # exam | interview
+
 screen:
   monitor_index: 0           # 0 for primary monitor
   fps: 15                    # Lower FPS for screen recording
@@ -164,9 +167,17 @@ python src/main.py --source uploads/interview_recording.mp4 --headless --disable
 | Argument | Description |
 | :--- | :--- |
 | `--source` | **(Required)** The input source. Use an integer (e.g., `0`) for the default webcam, or provide a string path to a video file (e.g., `video.mp4`). |
+| `--mode` | Session mode policy: `exam` (strict proctoring) or `interview` (speech allowed, no voice/mouth speaking violations). |
 | `--headless` | Runs the analysis without a Graphical User Interface (GUI). Disables OpenCV video display windows. Required for server-side or background execution. |
 | `--disable-audio` | Mutes all system audio alerts (e.g., text-to-speech warnings). Useful for silent batch processing. |
 | `--no-screen-recording` | Disables the screen capture functionality. Improves performance when only analyzing pre-recorded video files. |
+
+### Interview Mode Example
+For interviews where speaking is expected:
+```bash
+python src/main.py --mode interview
+```
+This keeps face/object/multi-face checks active but disables speaking-related violations.
 
 ## Start Fresh For New Candidate
 

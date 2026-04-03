@@ -41,6 +41,11 @@ def _parse_video_source(source_value):
 def parse_args():
     parser = argparse.ArgumentParser(description="Exam cheating detection")
     parser.add_argument("--source", help="Video source index (e.g. 0) or file path")
+    parser.add_argument(
+        "--mode",
+        choices=["exam", "interview"],
+        help="Session mode: exam (strict) or interview (speech allowed)"
+    )
     parser.add_argument("--headless", action="store_true", help="Disable OpenCV preview window")
     parser.add_argument("--disable-audio", action="store_true", help="Disable audio monitoring")
     parser.add_argument(
@@ -203,7 +208,7 @@ def display_detection_results(frame, results):
         f"Face: {'Present' if results['face_present'] else 'Absent'}",
         f"Gaze: {results['gaze_direction']}",
         f"Eyes: {'Open' if results['eye_ratio'] > 0.25 else 'Closed'}",
-        f"Mouth: {'Moving' if results['mouth_moving'] else 'Still'}",
+        f"Mouth: {results.get('mouth_status', 'Moving' if results['mouth_moving'] else 'Still')}",
         f"Voice: {results.get('voice_status', 'Listening')}"
     ]
     
@@ -235,13 +240,21 @@ def main(cli_args=None):
     config = load_config()
     args = cli_args or parse_args()
 
+    config_session_mode = str(config.get("session", {}).get("mode", "exam")).strip().lower()
+    session_mode = (args.mode or config_session_mode or "exam").lower()
+    if session_mode not in {"exam", "interview"}:
+        session_mode = "exam"
+
     source_override = _parse_video_source(args.source)
     if source_override is not None:
         config['video']['source'] = source_override
     if args.no_screen_recording:
         config['screen']['recording'] = False
-    if args.disable_audio:
+    if args.disable_audio or session_mode == "interview":
         config['detection']['audio_monitoring']['enabled'] = False
+
+    # Policy toggles by session mode.
+    allow_mouth_violations = session_mode == "exam"
 
     alert_logger = AlertLogger(config)
     alert_system = AlertSystem(config)
@@ -263,7 +276,7 @@ def main(cli_args=None):
     
     # Initialize real-time audio monitoring state
     audio_state = {
-        "voice_status": "Disabled",
+        "voice_status": "Allowed" if session_mode == "interview" else "Disabled",
         "updated_at": None,
         "details": ""
     }
@@ -281,6 +294,14 @@ def main(cli_args=None):
             violation_logger,
             audio_state,
             audio_state_lock
+        )
+    else:
+        _update_voice_state(
+            audio_state,
+            audio_state_lock,
+            "Allowed" if session_mode == "interview" else "Disabled",
+            os.path.join(_resolve_project_path(config["logging"]["log_path"]), "audio_status.json"),
+            f"session_mode={session_mode}"
         )
 
     try:
@@ -315,6 +336,7 @@ def main(cli_args=None):
                 'gaze_direction': 'Center',
                 'eye_ratio': 0.3,
                 'mouth_moving': False,
+                'mouth_status': 'Allowed' if not allow_mouth_violations else 'Still',
                 'multiple_faces': False,
                 'objects_detected': False,
                 'voice_status': 'Listening',
@@ -324,7 +346,12 @@ def main(cli_args=None):
             # Perform detections
             results['face_present'] = detectors[0].detect_face(frame)
             results['gaze_direction'], results['eye_ratio'] = detectors[1].track_eyes(frame)
-            results['mouth_moving'] = detectors[2].monitor_mouth(frame)
+            if allow_mouth_violations:
+                results['mouth_moving'] = detectors[2].monitor_mouth(frame)
+                results['mouth_status'] = 'Moving' if results['mouth_moving'] else 'Still'
+            else:
+                results['mouth_moving'] = False
+                results['mouth_status'] = 'Allowed'
             results['multiple_faces'] = detectors[3].detect_multiple_faces(frame)
             results['objects_detected'] = detectors[4].detect_objects(frame, visualize=not args.headless)
             with audio_state_lock:
@@ -382,7 +409,7 @@ def main(cli_args=None):
             #         {'duration': '5+ seconds', 'frame': results}
             #     )
                 # alert_system.speak_alert("GAZE_AWAY")
-            elif results['mouth_moving']:
+            elif results['mouth_moving'] and allow_mouth_violations:
                 violation_type = "MOUTH_MOVING"
                 alert_system.speak_alert(violation_type)
                 

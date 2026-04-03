@@ -4,6 +4,9 @@ video:
   fps: 30
   recording_path: "./recordings"
 
+session:
+  mode: "exam"                # exam | interview
+
 screen:
   monitor_index: 0           # 0 for primary monitor
   fps: 15                    # Lower FPS for screen recording
