@@ -193,6 +193,10 @@ If object checks are not required and you want the lowest latency:
 ```bash
 python src/main.py --disable-objects
 ```
+### Code Analysis Module
+
+On the dashboard, click the code analysis tab and paste the code. AI likelihood score will be calculated.
+For plag, add solution files in src/reference_solutions. 
 
 ## Start Fresh For New Candidate
 
