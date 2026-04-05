@@ -18,6 +18,7 @@ A computer vision system that detects suspicious activities during online exams 
 - **Audio Detection**: Monitors for voice/whispering in student's environment
 - **Alert Speaker**: Delivers real-time verbal warnings via text-to-speech
 - **Report Generation**: Creates detailed visual PDF and HTML reports with violations summary, heatmaps, and activity timeline  
+- **Dual Object Detection Modes**: Normal mode uses `YOLO26n` for speed, strict mode uses `RT-DETR` for higher precision.
 
 
 ## Technologies Used
@@ -170,6 +171,8 @@ python src/main.py --source uploads/interview_recording.mp4 --headless --disable
 | `--mode` | Session mode policy: `exam` (strict proctoring) or `interview` (speech allowed, no voice/mouth speaking violations). |
 | `--headless` | Runs the analysis without a Graphical User Interface (GUI). Disables OpenCV video display windows. Required for server-side or background execution. |
 | `--disable-audio` | Mutes all system audio alerts (e.g., text-to-speech warnings). Useful for silent batch processing. |
+| `--disable-objects` | Disables object detection entirely (best for maximum FPS / object checks not needed). |
+| `--strict-objects` | Enables strict object mode using RT-DETR backend. Default mode uses YOLO26n for speed. |
 | `--no-screen-recording` | Disables the screen capture functionality. Improves performance when only analyzing pre-recorded video files. |
 
 ### Interview Mode Example
@@ -178,6 +181,18 @@ For interviews where speaking is expected:
 python src/main.py --mode interview
 ```
 This keeps face/object/multi-face checks active but disables speaking-related violations.
+
+### Strict Object Detection Example
+For higher-precision object detection (phone/book), use strict mode:
+```bash
+python src/main.py --strict-objects
+```
+
+### Disable Object Detection Example
+If object checks are not required and you want the lowest latency:
+```bash
+python src/main.py --disable-objects
+```
 
 ## Start Fresh For New Candidate
 
@@ -192,14 +207,6 @@ Preview what will be deleted without deleting anything:
 ```bash
 python scripts/reset_candidate_session.py --dry-run
 ```
-## Interview mode
-
-Disables mouth movement and voice detection for interview environment
-
-```bash
-python src/main.py --mode interview
-```
-
 ## Troubleshooting
 Problem: Eye detection working, but not perfect
 

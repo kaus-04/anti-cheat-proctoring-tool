@@ -48,6 +48,12 @@ def parse_args():
     )
     parser.add_argument("--headless", action="store_true", help="Disable OpenCV preview window")
     parser.add_argument("--disable-audio", action="store_true", help="Disable audio monitoring")
+    parser.add_argument("--disable-objects", action="store_true", help="Disable object detector")
+    parser.add_argument(
+        "--strict-objects",
+        action="store_true",
+        help="Use strict object detection mode (RT-DETR backend)"
+    )
     parser.add_argument(
         "--no-screen-recording",
         action="store_true",
@@ -199,6 +205,41 @@ def start_audio_monitor_thread(config, alert_system, alert_logger, violation_log
     thread.start()
     return thread, stop_event
 
+
+def start_object_detection_thread(object_detector, shared_state, state_lock):
+    stop_event = threading.Event()
+
+    def _object_worker():
+        last_processed_id = -1
+        while not stop_event.is_set():
+            with state_lock:
+                frame_id = shared_state["frame_id"]
+                frame = shared_state["latest_frame"]
+
+            if frame is None or frame_id == last_processed_id:
+                stop_event.wait(0.01)
+                continue
+
+            last_processed_id = frame_id
+
+            # Requirement: run AI detection on downscaled frame (imgsz=640 path).
+            h, w = frame.shape[:2]
+            target_w = 640
+            target_h = max(int(h * (target_w / max(w, 1))), 1)
+            resized = cv2.resize(frame, (target_w, target_h))
+
+            detected, labels = object_detector.detect_objects(resized, visualize=False)
+            if detected is None:
+                continue
+            with state_lock:
+                shared_state["objects_detected"] = bool(detected)
+                shared_state["detected_objects"] = labels or []
+                shared_state["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    thread = threading.Thread(target=_object_worker, daemon=True)
+    thread.start()
+    return thread, stop_event
+
 def display_detection_results(frame, results):
     y_offset = 30
     line_height = 30
@@ -252,6 +293,7 @@ def main(cli_args=None):
         config['screen']['recording'] = False
     if args.disable_audio or session_mode == "interview":
         config['detection']['audio_monitoring']['enabled'] = False
+    config['detection']['objects']['strict_mode'] = bool(args.strict_objects)
 
     # Policy toggles by session mode.
     allow_mouth_violations = session_mode == "exam"
@@ -284,6 +326,18 @@ def main(cli_args=None):
     audio_thread = None
     audio_stop_event = None
 
+    objects_enabled = not args.disable_objects
+    object_thread = None
+    object_stop_event = None
+    object_state_lock = threading.Lock()
+    object_state = {
+        "frame_id": 0,
+        "latest_frame": None,
+        "objects_detected": False,
+        "detected_objects": [],
+        "last_update": None,
+    }
+
     cap = None
 
     if config['detection']['audio_monitoring'].get('enabled', False):
@@ -313,18 +367,29 @@ def main(cli_args=None):
             EyeTracker(config),
             MouthMonitor(config),
             MultiFaceDetector(config),
-            ObjectDetector(config),
         ]
+        object_detector = None
+        if objects_enabled:
+            object_detector = ObjectDetector(config)
+            detectors.append(object_detector)
         
         for detector in detectors:
             if hasattr(detector, 'set_alert_logger'):
                 detector.set_alert_logger(alert_logger)
+
+        if object_detector is not None:
+            object_thread, object_stop_event = start_object_detection_thread(
+                object_detector,
+                object_state,
+                object_state_lock
+            )
 
         # Start webcam recording
         video_recorder.start_recording()
         cap = cv2.VideoCapture(config['video']['source'])
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, config['video']['resolution'][0])
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config['video']['resolution'][1])
+        object_prev_detected = False
         
         while True:
             ret, frame = cap.read()
@@ -339,6 +404,7 @@ def main(cli_args=None):
                 'mouth_status': 'Allowed' if not allow_mouth_violations else 'Still',
                 'multiple_faces': False,
                 'objects_detected': False,
+                'detected_objects': [],
                 'voice_status': 'Listening',
                 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
@@ -353,11 +419,23 @@ def main(cli_args=None):
                 results['mouth_moving'] = False
                 results['mouth_status'] = 'Allowed'
             results['multiple_faces'] = detectors[3].detect_multiple_faces(frame)
-            results['objects_detected'] = detectors[4].detect_objects(frame, visualize=not args.headless)
+
+            if object_detector is not None:
+                with object_state_lock:
+                    object_state["frame_id"] += 1
+                    object_state["latest_frame"] = frame.copy()
+
+                with object_state_lock:
+                    results['objects_detected'] = object_state["objects_detected"]
+                    results['detected_objects'] = list(object_state["detected_objects"])
+
             with audio_state_lock:
                 results['voice_status'] = audio_state.get('voice_status', 'Listening')
 
-            if results['objects_detected']:
+            object_triggered = results['objects_detected'] and not object_prev_detected
+            object_prev_detected = results['objects_detected']
+
+            if object_triggered:
                 violation_type = "OBJECT_DETECTED"
                 alert_system.speak_alert(violation_type)
                 
@@ -367,7 +445,11 @@ def main(cli_args=None):
                 violation_logger.log_violation(
                     violation_type,
                     timestamp,
-                    {'duration': '5+ seconds', 'frame': results}
+                    {
+                        'duration': '5+ seconds',
+                        'detected_objects': results.get('detected_objects', []),
+                        'frame': results
+                    }
                 )
                 # alert_system.speak_alert("OBJECT_DETECTED")
             elif not results['face_present']:
@@ -435,6 +517,11 @@ def main(cli_args=None):
                     break
                 
     finally:
+        if object_stop_event is not None:
+            object_stop_event.set()
+        if object_thread is not None and object_thread.is_alive():
+            object_thread.join(timeout=2)
+
         if audio_stop_event is not None:
             audio_stop_event.set()
         if audio_thread is not None and audio_thread.is_alive():

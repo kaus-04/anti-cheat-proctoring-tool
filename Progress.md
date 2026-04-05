@@ -8,7 +8,7 @@
 | Gaze-Away Violation Logging Pipeline | In-Progress | `src/main.py` (branch currently commented for `GAZE_AWAY`) |
 | Mouth Movement Detection | Completed | `src/detection/mouth_detection.py`, `src/main.py` |
 | Multi-Face Detection | Completed | `src/detection/multi_face.py`, `src/main.py` |
-| Object Detection (Book / Cell Phone) | Completed | `src/detection/object_detection.py`, `config/config.yaml` |
+| Object Detection (Normal: YOLO26n, Strict: RT-DETR) | Completed | `src/detection/object_detection.py`, `src/main.py`, `config/config.yaml` |
 | Real-Time Audio VAD (WebRTCVAD + RMS Debounce) | Completed | `src/main.py` |
 | Interview Mode Policy (speech/mouth allowed) | Completed | `src/main.py`, `config/config.yaml` |
 | Webcam Recording | Completed | `src/utils/video_utils.py`, `src/main.py` |
@@ -27,7 +27,7 @@
 - `opencv-python`: frame capture, drawing overlays, display loop, and video encoding helpers.
 - `facenet-pytorch` (`MTCNN`): primary face presence detector in live loop.
 - `mediapipe` (`FaceMesh`, `refine_landmarks=True`): eye landmarks, iris-aware gaze estimation, mouth geometry.
-- `ultralytics` (`YOLO`): prohibited object detection (`book`, `cell phone`) with class-specific confidence.
+- `ultralytics` (`YOLO`, `RTDETR`): dual object detection backends (`YOLO26n` normal mode, `RT-DETR` strict mode).
 - `pyaudio`: microphone stream capture (`16kHz`, mono, int16).
 - `webrtcvad` (Mode 3): strict speech activity filtering from raw audio frames.
 - `audioop`: RMS energy calculation for sustained non-speech loudness events.
@@ -49,7 +49,7 @@ src/
     eye_tracking.py            # EAR + fused head/iris gaze direction estimation
     mouth_detection.py         # Mouth movement detection
     multi_face.py              # Multiple-face detection
-    object_detection.py        # YOLO object detector with target class filtering
+    object_detection.py        # Dual backend object detector (YOLO26n normal / RT-DETR strict)
     audio_detection.py         # Legacy/alternate audio monitor implementation (currently not main execution path)
   utils/
     video_utils.py             # Webcam recording writer lifecycle
@@ -82,6 +82,10 @@ src/
   - class-name normalization/aliases.
   - class-specific confidence support.
   - lower confidence floor for `cell phone`.
+- Finalized object detection runtime modes:
+  - Normal mode uses `YOLO26n` (fast path).
+  - Strict mode uses `RT-DETR` (higher precision path).
+  - Added CLI flags: `--strict-objects`, `--disable-objects`.
 - Added code analysis subsystem in dashboard:
   - `POST /api/code-analysis` accepts raw code.
   - Plagiarism scoring via `copydetect` (with safe fallback scorer).
@@ -104,6 +108,7 @@ src/
 - Replace mocked dashboard stats (`face_detected/current_activity/probability`) with live runtime feed.
 - Add persistent session metadata (`candidate_id`, `mode`) into violations/report header.
 - Add tests for mode-policy behavior (exam vs interview) and object threshold regressions.
+- Add dashboard toggle passthrough for object mode (`normal`/`strict`) and disable flag.
 - Install and validate `copydetect` in runtime environment (currently optional fallback path exists).
 - Install and validate `transformers` model download in runtime environment for live AI scoring.
 
@@ -126,12 +131,15 @@ src/
 | Eyes | `detection.eyes.consecutive_frames` | `3` |
 | Mouth | `detection.mouth.movement_threshold` | `3` |
 | Multi-face | `detection.multi_face.alert_threshold` | `5` |
+| Objects | `detection.objects.strict_mode` | `false` |
 | Objects | `detection.objects.min_confidence` | `0.35` |
 | Objects | `detection.objects.class_min_confidence.book` | `0.35` |
-| Objects | `detection.objects.class_min_confidence.cell phone` | `0.18` |
-| Objects | `detection.objects.detection_interval` | `5` |
+| Objects | `detection.objects.class_min_confidence.cell phone` | `0.25` |
+| Objects | `detection.objects.detection_interval` | `1` |
 | Objects | `detection.objects.max_fps` | `5` |
-| Objects | `detection.objects.imgsz` | `640` |
+| Objects | `detection.objects.imgsz` | `1024` |
+| Objects | `detection.objects.model_candidates` | `["yolo26n.pt", "yolo11n.pt", "yolov8n.pt"]` |
+| Objects | `detection.objects.strict_model_candidates` | `["rtdetr-l.pt", "rtdetr-x.pt"]` |
 | Audio | `detection.audio_monitoring.sample_rate` | `16000` |
 | Audio | `detection.audio_monitoring.energy_threshold` | `1200` |
 | Audio | `detection.audio_monitoring.debounce_window_frames` | `20` |

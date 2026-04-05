@@ -72,13 +72,14 @@
 
 
 import cv2
-from ultralytics import RTDETR
+from ultralytics import YOLO, RTDETR
 from datetime import datetime
 from pathlib import Path
 
 class ObjectDetector:
     def __init__(self, config):
         self.config = config['detection']['objects']
+        self.strict_mode = bool(self.config.get("strict_mode", False))
         self.model = None
         self.class_aliases = {
             "cellphone": "cell phone",
@@ -93,6 +94,8 @@ class ObjectDetector:
             for name, value in raw_class_conf.items()
         }
         self.class_map = {}
+        self.init_warning = None
+        self.loaded_model_path = None
         self.alert_logger = None
         self.detection_interval = int(self.config.get('detection_interval', 1))
         self.frame_count = 0
@@ -104,15 +107,34 @@ class ObjectDetector:
         return self.class_aliases.get(normalized, normalized)
 
     def _initialize_model(self):
-        """Initialize RT-DETR model."""
+        """Initialize detector backend by mode.
+        - strict_mode=True  -> RT-DETR (higher precision)
+        - strict_mode=False -> YOLO26n (faster default)
+        """
         try:
-            model_name = "rtdetr-l.pt"
-            local_path = Path("models") / model_name
-            model_path = str(local_path) if local_path.exists() else model_name
-            self.model = RTDETR(model_path)
+            if self.strict_mode:
+                backend_name = "RTDETR"
+                candidates = self.config.get("strict_model_candidates", ["rtdetr-l.pt", "rtdetr-x.pt"])
+            else:
+                backend_name = "YOLO"
+                candidates = self.config.get("model_candidates", ["yolo26n.pt", "yolo11n.pt", "yolov8n.pt"])
+            last_error = None
+            for model_name in candidates:
+                local_path = Path("models") / model_name
+                model_path = str(local_path) if local_path.exists() else model_name
+                try:
+                    if self.strict_mode:
+                        self.model = RTDETR(model_path)
+                    else:
+                        self.model = YOLO(model_path)
+                    self.loaded_model_path = model_path
+                    break
+                except Exception as model_err:
+                    last_error = model_err
+                    continue
 
-            if self.alert_logger:
-                self.alert_logger.log_alert("OBJECT_DETECTOR_MODEL", f"Loaded model: {model_path}")
+            if self.model is None:
+                raise RuntimeError(f"Failed to load {backend_name} models from {candidates}: {last_error}")
 
             names = self.model.names if isinstance(self.model.names, dict) else {
                 i: name for i, name in enumerate(self.model.names)
@@ -122,38 +144,46 @@ class ObjectDetector:
                 if normalized in self.target_names:
                     self.class_map[int(class_id)] = normalized
 
-            if not self.class_map and self.alert_logger:
-                self.alert_logger.log_alert(
-                    "OBJECT_DETECTION_WARNING",
-                    f"Target classes not found in model: {sorted(self.target_names)}"
-                )
+            if not self.class_map:
+                self.init_warning = f"Target classes not found in model: {sorted(self.target_names)}"
+            else:
+                self.init_warning = None
         except Exception as e:
             raise RuntimeError(f"Failed to initialize object detector: {str(e)}")
 
     def set_alert_logger(self, alert_logger):
         self.alert_logger = alert_logger
+        if self.loaded_model_path:
+            mode_label = "strict" if self.strict_mode else "normal"
+            self.alert_logger.log_alert(
+                "OBJECT_DETECTOR_MODEL",
+                f"Loaded ({mode_label}) model: {self.loaded_model_path}"
+            )
+        if self.init_warning:
+            self.alert_logger.log_alert("OBJECT_DETECTION_WARNING", self.init_warning)
 
     def detect_objects(self, frame, visualize=False):
         """Object detection with frame skipping and class filtering"""
         self.frame_count += 1
         if self.frame_count % max(self.detection_interval, 1) != 0:
-            return False
+            return None, None
 
         current_time = datetime.now()
         time_since_last = (current_time - self.last_detection_time).total_seconds()
         
         # Skip detection if not enough time has passed
         if time_since_last < (1.0 / max(float(self.config.get('max_fps', 5)), 1.0)):
-            return False
+            return None, None
             
         try:
-            imgsz = int(self.config.get('imgsz', 1024))
+            imgsz = int(self.config.get('imgsz', 640))
             conf_threshold = float(self.config.get('min_confidence', 0.35))
 
             # Run inference directly on original frame for better small-object recall.
             results = self.model(frame, verbose=False, imgsz=imgsz, conf=conf_threshold)
             
             detected = False
+            detected_labels = []
             for result in results:
                 if result.boxes is None:
                     continue
@@ -170,6 +200,7 @@ class ObjectDetector:
 
                     if conf >= class_threshold:
                         detected = True
+                        detected_labels.append(label)
                         
                         if self.alert_logger:
                             self.alert_logger.log_alert(
@@ -185,7 +216,7 @@ class ObjectDetector:
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
             
             self.last_detection_time = current_time
-            return detected
+            return detected, sorted(set(detected_labels))
             
         except Exception as e:
             if self.alert_logger:
@@ -193,4 +224,4 @@ class ObjectDetector:
                     "OBJECT_DETECTION_ERROR",
                     f"Object detection failed: {str(e)}"
                 )
-            return False
+            return False, []

@@ -27,11 +27,13 @@ detection:
   multi_face:
     alert_threshold: 5        # frames
   objects:
+    strict_mode: false
     min_confidence: 0.35  # Lower threshold improves small-object recall (phone/book)
-    detection_interval: 5 # frames between detections
+    detection_interval: 1 # run every frame in async worker (FPS throttled separately)
     max_fps: 5            # Maximum detection frames per second
     imgsz: 1024           # Higher resolution improves small-object recall
-    model_candidates: ["yolo11n.pt", "yolo26s.pt", "yolov8n.pt"]
+    model_candidates: ["yolo26n.pt", "yolo11n.pt", "yolov8n.pt"]
+    strict_model_candidates: ["rtdetr-l.pt", "rtdetr-x.pt"]
     target_objects: ["book", "cell phone"]
     class_min_confidence:
       book: 0.35
