@@ -72,7 +72,7 @@
 
 
 import cv2
-from ultralytics import YOLO
+from ultralytics import RTDETR
 from datetime import datetime
 from pathlib import Path
 
@@ -104,14 +104,19 @@ class ObjectDetector:
         return self.class_aliases.get(normalized, normalized)
 
     def _initialize_model(self):
-        """Initialize optimized YOLO model"""
+        """Initialize RT-DETR model."""
         try:
-            # Prefer local model if present; otherwise use ultralytics default resolution path.
-            local_model = Path('models/yolov8n.pt')
-            model_path = str(local_model) if local_model.exists() else 'yolov8n.pt'
-            self.model = YOLO(model_path)
+            model_name = "rtdetr-l.pt"
+            local_path = Path("models") / model_name
+            model_path = str(local_path) if local_path.exists() else model_name
+            self.model = RTDETR(model_path)
 
-            names = self.model.names if isinstance(self.model.names, dict) else {}
+            if self.alert_logger:
+                self.alert_logger.log_alert("OBJECT_DETECTOR_MODEL", f"Loaded model: {model_path}")
+
+            names = self.model.names if isinstance(self.model.names, dict) else {
+                i: name for i, name in enumerate(self.model.names)
+            }
             for class_id, class_name in names.items():
                 normalized = self._normalize_name(class_name)
                 if normalized in self.target_names:
@@ -142,8 +147,7 @@ class ObjectDetector:
             return False
             
         try:
-            orig_h, orig_w = frame.shape[:2]
-            imgsz = int(self.config.get('imgsz', 640))
+            imgsz = int(self.config.get('imgsz', 1024))
             conf_threshold = float(self.config.get('min_confidence', 0.35))
 
             # Run inference directly on original frame for better small-object recall.

@@ -30,11 +30,12 @@ detection:
     min_confidence: 0.35  # Lower threshold improves small-object recall (phone/book)
     detection_interval: 5 # frames between detections
     max_fps: 5            # Maximum detection frames per second
-    imgsz: 640            # Inference resolution for YOLO
+    imgsz: 1024           # Higher resolution improves small-object recall
+    model_candidates: ["yolo11n.pt", "yolo26s.pt", "yolov8n.pt"]
     target_objects: ["book", "cell phone"]
     class_min_confidence:
       book: 0.35
-      cell phone: 0.18
+      cell phone: 0.25
   audio_monitoring:
     enabled: true
     sample_rate: 16000
