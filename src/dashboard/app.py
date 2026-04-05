@@ -7,8 +7,24 @@ import threading
 import uuid
 import sys
 import json
+import tempfile
+import inspect
+import re
 from collections import Counter, defaultdict
 from werkzeug.utils import secure_filename
+try:
+    from transformers import pipeline
+    TRANSFORMERS_AVAILABLE = True
+except Exception:
+    pipeline = None
+    TRANSFORMERS_AVAILABLE = False
+
+try:
+    from copydetect import CopyDetector  # type: ignore
+    COPYDETECT_AVAILABLE = True
+except Exception:
+    CopyDetector = None
+    COPYDETECT_AVAILABLE = False
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent.parent
@@ -43,6 +59,24 @@ LOG_DIR = _resolve_config_path(config['logging']['log_path'])
 VOICE_STATUS_FILE = LOG_DIR / "audio_status.json"
 SEVERITY_LEVELS = config.get('reporting', {}).get('severity_levels', {})
 
+REFERENCE_SOLUTIONS_DIR = PROJECT_ROOT / "src" / "reference_solutions"
+REFERENCE_SOLUTIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+AI_DETECTOR_MODEL = "roberta-base-openai-detector"
+AI_DETECTOR_PIPELINE = None
+AI_DETECTOR_LOAD_ERROR = None
+if TRANSFORMERS_AVAILABLE:
+    try:
+        AI_DETECTOR_PIPELINE = pipeline(
+            "text-classification",
+            model=AI_DETECTOR_MODEL,
+            tokenizer=AI_DETECTOR_MODEL,
+        )
+    except Exception as exc:
+        AI_DETECTOR_LOAD_ERROR = str(exc)
+else:
+    AI_DETECTOR_LOAD_ERROR = "transformers library not installed"
+
 
 def _safe_relative_path(base_dir, target_path):
     base = base_dir.resolve()
@@ -67,6 +101,132 @@ def _parse_violation_time(value):
         except ValueError:
             continue
     return None
+
+
+def _normalize_code_for_similarity(text):
+    text = text.lower()
+    text = re.sub(r"#[^\n]*", " ", text)
+    text = re.sub(r"\"\"\"[\s\S]*?\"\"\"", " ", text)
+    text = re.sub(r"\'\'\'[\s\S]*?\'\'\'", " ", text)
+    text = re.sub(r"\b[_a-zA-Z][_a-zA-Z0-9]*\b", "id", text)
+    text = re.sub(r"\d+", "num", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _fallback_similarity_percent(submission_code):
+    submission_tokens = set(_normalize_code_for_similarity(submission_code).split())
+    if not submission_tokens:
+        return 0.0
+
+    best = 0.0
+    for ref_file in REFERENCE_SOLUTIONS_DIR.rglob("*"):
+        if not ref_file.is_file():
+            continue
+        try:
+            ref_text = ref_file.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        ref_tokens = set(_normalize_code_for_similarity(ref_text).split())
+        if not ref_tokens:
+            continue
+        score = (len(submission_tokens & ref_tokens) / max(len(submission_tokens | ref_tokens), 1)) * 100.0
+        best = max(best, score)
+    return round(best, 2)
+
+
+def _extract_percentages_from_html(path):
+    try:
+        html = Path(path).read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return []
+
+    values = []
+    for m in re.findall(r"(\d+(?:\.\d+)?)\s*%", html):
+        try:
+            values.append(float(m))
+        except ValueError:
+            continue
+    return [v for v in values if 0.0 <= v <= 100.0]
+
+
+def _run_copydetect(submission_file, tmp_dir):
+    if not COPYDETECT_AVAILABLE:
+        return None, "copydetect library not installed"
+
+    ref_files_exist = any(p.is_file() for p in REFERENCE_SOLUTIONS_DIR.rglob("*"))
+    if not ref_files_exist:
+        return 0.0, "reference_solutions directory is empty"
+
+    out_file = Path(tmp_dir) / "copydetect_report.html"
+
+    kwargs = {}
+    sig = inspect.signature(CopyDetector)
+    params = sig.parameters
+
+    if "test_dirs" in params:
+        kwargs["test_dirs"] = [str(Path(submission_file).parent)]
+    if "ref_dirs" in params:
+        kwargs["ref_dirs"] = [str(REFERENCE_SOLUTIONS_DIR)]
+    if "out_file" in params:
+        kwargs["out_file"] = str(out_file)
+    if "autoopen" in params:
+        kwargs["autoopen"] = False
+    if "silent" in params:
+        kwargs["silent"] = True
+
+    detector = CopyDetector(**kwargs)
+
+    ran = False
+    for method_name in ("run", "analyze", "compare", "generate_report"):
+        if hasattr(detector, method_name):
+            getattr(detector, method_name)()
+            ran = True
+            break
+
+    percentages = _extract_percentages_from_html(out_file)
+    if percentages:
+        return round(max(percentages), 2), None
+
+    code_text = Path(submission_file).read_text(encoding="utf-8", errors="ignore")
+    if ran:
+        return _fallback_similarity_percent(code_text), "copydetect output not parseable; used fallback scoring"
+    return _fallback_similarity_percent(code_text), "copydetect runner method not found; used fallback scoring"
+
+
+def _ai_probability_percent(code_text):
+    if AI_DETECTOR_PIPELINE is None:
+        return 0.0, f"AI detector unavailable: {AI_DETECTOR_LOAD_ERROR or 'unknown error'}"
+
+    sample = code_text[:4000]
+    try:
+        output = AI_DETECTOR_PIPELINE(sample, truncation=True)
+    except Exception as exc:
+        return 0.0, f"AI detector failed: {exc}"
+
+    result = output[0]
+    candidates = result if isinstance(result, list) else [result]
+
+    ai_prob = 0.0
+    for c in candidates:
+        label = str(c.get("label", "")).lower()
+        score = float(c.get("score", 0.0))
+
+        if any(k in label for k in ("ai", "generated", "fake", "label_1")):
+            ai_prob = max(ai_prob, score)
+        elif any(k in label for k in ("human", "real", "label_0")):
+            ai_prob = max(ai_prob, 1.0 - score)
+
+    return round(ai_prob * 100.0, 2), None
+
+
+def _risk_level(plagiarism_score, ai_probability):
+    combined = max(plagiarism_score, ai_probability)
+    if combined >= 70:
+        return "High"
+    if combined >= 40:
+        return "Medium"
+    return "Low"
 
 
 def _build_summary_payload(violations):
@@ -194,17 +354,19 @@ def _run_analysis_job(job_id, video_path):
 def dashboard():
     return render_template('dashboard.html')
 
+
 @app.route('/api/alerts')
 def get_alerts():
     log_dir = _resolve_config_path(config['logging']['log_path'])
     log_file = log_dir / "alerts.log"
     alerts = []
-    
+
     if log_file.exists():
         with open(log_file, 'r', encoding='utf-8') as f:
-            alerts = [line.strip() for line in f.readlines()[-10:]]  # Get last 10 alerts
-            
+            alerts = [line.strip() for line in f.readlines()[-10:]]
+
     return jsonify(alerts)
+
 
 @app.route('/api/stats')
 def get_stats():
@@ -287,6 +449,46 @@ def get_violations_summary():
     return jsonify({"ok": True, "summary": _build_summary_payload(violations)})
 
 
+@app.route('/api/code-analysis', methods=['POST'])
+def code_analysis():
+    payload = request.get_json(silent=True) or {}
+    code_text = payload.get("code", "")
+    if not isinstance(code_text, str) or not code_text.strip():
+        return jsonify({"ok": False, "error": "code field is required"}), 400
+
+    warnings = []
+    plagiarism_score = 0.0
+
+    with tempfile.TemporaryDirectory(prefix="code_analysis_", dir=str(PROJECT_ROOT)) as tmp_dir:
+        submission_file = Path(tmp_dir) / "submission.py"
+        submission_file.write_text(code_text, encoding="utf-8")
+
+        try:
+            score, warn = _run_copydetect(submission_file, tmp_dir)
+            if score is None:
+                plagiarism_score = _fallback_similarity_percent(code_text)
+            else:
+                plagiarism_score = float(score)
+            if warn:
+                warnings.append(warn)
+        except Exception as exc:
+            plagiarism_score = _fallback_similarity_percent(code_text)
+            warnings.append(f"copydetect failed: {exc}; used fallback scoring")
+
+    ai_probability, ai_warn = _ai_probability_percent(code_text)
+    if ai_warn:
+        warnings.append(ai_warn)
+
+    response = {
+        "ok": True,
+        "plagiarism_score": round(plagiarism_score, 2),
+        "ai_probability": round(ai_probability, 2),
+        "risk_level": _risk_level(plagiarism_score, ai_probability),
+        "warnings": warnings,
+    }
+    return jsonify(response)
+
+
 @app.route('/download/report/<path:filename>')
 def download_report(filename):
     try:
@@ -313,6 +515,7 @@ def artifact_image(filename):
         return jsonify({"ok": False, "error": "Image not found."}), 404
 
     return send_from_directory(str(IMAGES_DIR), filename)
+
 
 if __name__ == '__main__':
     app.run(debug=True)

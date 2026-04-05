@@ -18,6 +18,9 @@
 | Report Generation (PDF/HTML + Timeline + Heatmap) | Completed | `src/reporting/report_generator.py`, `src/reporting/templates/base_report.html` |
 | Dashboard Upload + Background Analysis Jobs | Completed | `src/dashboard/app.py`, `src/dashboard/templates/dashboard.html` |
 | Dashboard Report Download + Visualizations | Completed | `src/dashboard/app.py`, `src/dashboard/templates/dashboard.html` |
+| Code Plagiarism Analysis API (`/api/code-analysis`) | Completed | `src/dashboard/app.py` |
+| AI-Generated Code Probability Scoring | Completed | `src/dashboard/app.py` |
+| Dashboard Code Analysis Tab (input + progress bars) | Completed | `src/dashboard/templates/dashboard.html` |
 | Identity Verification / Candidate Matching | Planned | N/A |
 
 ## 2) Technical Stack & Dependencies
@@ -29,6 +32,8 @@
 - `webrtcvad` (Mode 3): strict speech activity filtering from raw audio frames.
 - `audioop`: RMS energy calculation for sustained non-speech loudness events.
 - `flask`: dashboard server, upload API, job polling API, artifact/report serving.
+- `copydetect`: plagiarism similarity analysis against local `src/reference_solutions/`.
+- `transformers`: AI-generated text/code probability scoring via startup-loaded text classifier pipeline.
 - `matplotlib`: timeline + heatmap rendering for report artifacts.
 - `jinja2`: report HTML templating.
 - `pdfkit`: HTML-to-PDF export.
@@ -57,8 +62,8 @@ src/
     report_generator.py        # Builds stats + images + PDF/HTML report artifact
     templates/base_report.html # Report template
   dashboard/
-    app.py                     # Flask APIs (upload/job/artifacts/stats/download)
-    templates/dashboard.html   # Dashboard UI (upload, status, charts, report download)
+    app.py                     # Flask APIs (upload/job/artifacts/stats/download/code-analysis)
+    templates/dashboard.html   # Dashboard UI (proctoring tab + code analysis tab)
 ```
 
 ## 4) Current Session Handover
@@ -77,6 +82,18 @@ src/
   - class-name normalization/aliases.
   - class-specific confidence support.
   - lower confidence floor for `cell phone`.
+- Added code analysis subsystem in dashboard:
+  - `POST /api/code-analysis` accepts raw code.
+  - Plagiarism scoring via `copydetect` (with safe fallback scorer).
+  - AI probability scoring via startup-loaded `transformers` pipeline.
+  - Risk level classification and warning propagation.
+- Added dashboard Code Analysis tab:
+  - code textarea input.
+  - run analysis action.
+  - plagiarism/AI progress bars + risk badge.
+- Hardened startup behavior:
+  - dashboard no longer crashes when `transformers` is missing.
+  - AI detector is marked unavailable with warning instead.
 
 ### Next Steps / Known Gaps
 - Re-enable and harden **`GAZE_AWAY` violation branch** in `main.py` (currently commented).
@@ -87,6 +104,8 @@ src/
 - Replace mocked dashboard stats (`face_detected/current_activity/probability`) with live runtime feed.
 - Add persistent session metadata (`candidate_id`, `mode`) into violations/report header.
 - Add tests for mode-policy behavior (exam vs interview) and object threshold regressions.
+- Install and validate `copydetect` in runtime environment (currently optional fallback path exists).
+- Install and validate `transformers` model download in runtime environment for live AI scoring.
 
 ## 5) Configuration State (`config/config.yaml`)
 ### Session / Runtime
