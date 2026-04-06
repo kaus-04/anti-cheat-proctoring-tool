@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import torch
-from facenet_pytorch import InceptionResnetV1, MTCNN
+from facenet_pytorch import InceptionResnetV1, MTCNN # type: ignore
 
 
 class IdentityVerifier:
