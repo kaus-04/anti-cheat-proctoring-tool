@@ -314,5 +314,53 @@ def artifact_image(filename):
 
     return send_from_directory(str(IMAGES_DIR), filename)
 
+import difflib
+
+import difflib
+
+@app.route('/api/plagiarism-check', methods=['POST'])
+def plagiarism_check():
+    if 'files' not in request.files:
+        return jsonify({"ok": False, "error": "No files uploaded"}), 400
+
+    files = request.files.getlist('files')
+
+    # ===== LOAD GROUND TRUTH =====
+    ground_truth_path = PROJECT_ROOT / "ground_truth" / "solution.py"
+
+    if not ground_truth_path.exists():
+        return jsonify({
+            "ok": False,
+            "error": "Ground truth file missing at /ground_truth/solution.py"
+        }), 500
+
+    with open(ground_truth_path, "r", encoding="utf-8") as f:
+        ground_truth_code = f.read()
+
+    results = []
+
+    for f in files:
+        try:
+            student_code = f.read().decode('utf-8', errors='ignore')
+
+            similarity = difflib.SequenceMatcher(
+                None,
+                ground_truth_code,
+                student_code
+            ).ratio()
+
+            results.append({
+                "file": f.filename,
+                "similarity": round(similarity * 100, 2)
+            })
+
+        except Exception:
+            continue
+
+    return jsonify({
+        "ok": True,
+        "results": results
+    })
+
 if __name__ == '__main__':
     app.run(debug=True)

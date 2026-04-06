@@ -25,7 +25,7 @@ from reporting.report_generator import ReportGenerator
 
 
 def load_config():
-    with open('config/config.yaml') as f:
+    with open(r'config\config.yaml') as f:
         return yaml.safe_load(f)
 
 
