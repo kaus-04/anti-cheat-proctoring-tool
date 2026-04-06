@@ -15,6 +15,7 @@ from detection.eye_tracking import EyeTracker
 from detection.mouth_detection import MouthMonitor
 from detection.object_detection import ObjectDetector
 from detection.multi_face import MultiFaceDetector
+from detection.identity_verification import IdentityVerifier
 from utils.video_utils import VideoRecorder
 from utils.screen_capture import ScreenRecorder
 from utils.logging import AlertLogger
@@ -250,7 +251,8 @@ def display_detection_results(frame, results):
         f"Gaze: {results['gaze_direction']}",
         f"Eyes: {'Open' if results['eye_ratio'] > 0.25 else 'Closed'}",
         f"Mouth: {results.get('mouth_status', 'Moving' if results['mouth_moving'] else 'Still')}",
-        f"Voice: {results.get('voice_status', 'Listening')}"
+        f"Voice: {results.get('voice_status', 'Listening')}",
+        f"Identity: {results.get('identity_status', 'Not started')}"
     ]
     
     # Alert indicators
@@ -368,6 +370,7 @@ def main(cli_args=None):
             MouthMonitor(config),
             MultiFaceDetector(config),
         ]
+        identity_verifier = IdentityVerifier(config)
         object_detector = None
         if objects_enabled:
             object_detector = ObjectDetector(config)
@@ -406,6 +409,10 @@ def main(cli_args=None):
                 'objects_detected': False,
                 'detected_objects': [],
                 'voice_status': 'Listening',
+                'identity_status': 'Enrolling',
+                'identity_enrolled': False,
+                'identity_distance': None,
+                'identity_mismatch': False,
                 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             
@@ -419,6 +426,11 @@ def main(cli_args=None):
                 results['mouth_moving'] = False
                 results['mouth_status'] = 'Allowed'
             results['multiple_faces'] = detectors[3].detect_multiple_faces(frame)
+            identity_result = identity_verifier.verify(frame)
+            results['identity_status'] = identity_result['status']
+            results['identity_enrolled'] = identity_result['enrolled']
+            results['identity_distance'] = identity_result['distance']
+            results['identity_mismatch'] = identity_result['identity_mismatch']
 
             if object_detector is not None:
                 with object_state_lock:
@@ -478,6 +490,25 @@ def main(cli_args=None):
                     {'duration': '5+ seconds', 'frame': results}
                 )
                 # alert_system.speak_alert("MULTIPLE_FACES")
+            elif results['identity_mismatch']:
+                violation_type = "IDENTITY_MISMATCH"
+                alert_system.speak_alert(violation_type)
+
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                violation_image = violation_capturer.capture_violation(frame, violation_type, timestamp)
+                violation_logger.log_violation(
+                    violation_type,
+                    timestamp,
+                    {
+                        'distance': results.get('identity_distance'),
+                        'threshold': float(
+                            config.get("detection", {})
+                            .get("identity_verification", {})
+                            .get("distance_threshold", 0.45)
+                        ),
+                        'frame': results
+                    }
+                )
             # elif results['gaze_direction'] != "Center":
             #     violation_type = "GAZE_AWAY"
             #     alert_system.speak_alert(violation_type)

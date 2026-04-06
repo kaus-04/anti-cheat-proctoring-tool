@@ -19,6 +19,7 @@ class AlertSystem:
             "FACE_REAPPEARED": "Thank you for looking at the screen",
             "MULTIPLE_FACES": "We detected multiple people",
             "OBJECT_DETECTED": "Unauthorized object detected",
+            "IDENTITY_MISMATCH": "Identity mismatch detected",
             "GAZE_AWAY": "Please focus on your screen",
             "MOUTH_MOVING": "Please maintain silence during exam",
             "SPEECH_VIOLATION": "Speaking during exam is not allowed",

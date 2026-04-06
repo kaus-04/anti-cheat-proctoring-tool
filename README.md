@@ -11,13 +11,14 @@ A computer vision system that detects suspicious activities during online exams 
 - **Gaze Analysis**: Monitors direction of eye gaze
 - **Mouth Movement Detection**: Identifies potential talking or whispering
 - **Multi-Face Detection**: Alerts when multiple faces appear in frame
+- **Same Candidate Recognition**: Enrolls candidate face embeddings and flags `IDENTITY_MISMATCH` if a different person appears
 - **Real-time Alerts**: Flags suspicious activities with timestamps
 - **Dashboard**: Visual interface showing detection metrics and alerts
 - **Object Delection**: Object Detection: Detects prohibited objects (cell phone, book, etc.).
 - **Screen Recoding**: Continuously captures examinee's screen activity
 - **Audio Detection**: Monitors for voice/whispering in student's environment
 - **Alert Speaker**: Delivers real-time verbal warnings via text-to-speech
-- **Report Generation**: Creates detailed visual PDF and HTML reports with violations summary, heatmaps, and activity timeline  
+- **Report Generation**: Creates detailed visual PDF and HTML reports with violations summary, heatmaps, and activity timeline with non-overlapping point annotations  
 - **Dual Object Detection Modes**: Normal mode uses `YOLO26n` for speed, strict mode uses `RT-DETR` for higher precision.
 
 
@@ -80,6 +81,12 @@ detection:
     movement_threshold: 3     # consecutive frames
   multi_face:
     alert_threshold: 5        # frames
+  identity_verification:
+    enrollment_samples: 24    # enrollment baseline samples
+    check_interval: 10        # verify every N frames
+    distance_threshold: 0.45  # cosine distance mismatch threshold
+    mismatch_consecutive: 3   # trigger after N consecutive mismatches
+    min_face_confidence: 0.90 # clear single-face requirement
   objects:
     min_confidence: 0.65  # Detection confidence threshold
     detection_interval: 5 # frames between detections

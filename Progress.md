@@ -21,7 +21,7 @@
 | Code Plagiarism Analysis API (`/api/code-analysis`) | Completed | `src/dashboard/app.py` |
 | AI-Generated Code Probability Scoring | Completed | `src/dashboard/app.py` |
 | Dashboard Code Analysis Tab (input + progress bars) | Completed | `src/dashboard/templates/dashboard.html` |
-| Identity Verification / Candidate Matching | Planned | N/A |
+| Identity Verification / Candidate Matching | Completed | `src/detection/identity_verification.py`, `src/main.py`, `config/config.yaml` |
 
 ## 2) Technical Stack & Dependencies
 - `opencv-python`: frame capture, drawing overlays, display loop, and video encoding helpers.
@@ -98,6 +98,14 @@ src/
 - Hardened startup behavior:
   - dashboard no longer crashes when `transformers` is missing.
   - AI detector is marked unavailable with warning instead.
+- Added same-candidate identity verification:
+  - enrollment baseline from multiple clear face embeddings.
+  - periodic cosine-distance checks against baseline.
+  - `IDENTITY_MISMATCH` violation routing with screenshot + timestamp metadata.
+  - fail-safe runtime behavior when embedding model is unavailable.
+- Improved report timeline readability:
+  - non-overlapping/staggered annotation placement for dense events.
+  - connector lines and label background boxes for clearer labels.
 
 ### Next Steps / Known Gaps
 - Re-enable and harden **`GAZE_AWAY` violation branch** in `main.py` (currently commented).
@@ -131,6 +139,11 @@ src/
 | Eyes | `detection.eyes.consecutive_frames` | `3` |
 | Mouth | `detection.mouth.movement_threshold` | `3` |
 | Multi-face | `detection.multi_face.alert_threshold` | `5` |
+| Identity | `detection.identity_verification.enrollment_samples` | `24` |
+| Identity | `detection.identity_verification.check_interval` | `10` |
+| Identity | `detection.identity_verification.distance_threshold` | `0.45` |
+| Identity | `detection.identity_verification.mismatch_consecutive` | `3` |
+| Identity | `detection.identity_verification.min_face_confidence` | `0.90` |
 | Objects | `detection.objects.strict_mode` | `false` |
 | Objects | `detection.objects.min_confidence` | `0.35` |
 | Objects | `detection.objects.class_min_confidence.book` | `0.35` |
