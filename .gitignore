@@ -138,3 +138,7 @@ config/alerts.yaml
 
 # no need to commit video files
 uploads/*
+
+# reference solutions code plag
+reference_solutions/
+scripts/sample_binary_search.py
