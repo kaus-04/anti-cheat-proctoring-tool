@@ -1,4 +1,4 @@
-# AI-Powered Online Exam Cheating Detection System
+# AI-Powered Online Exam/Interview Cheating Detection System
 
 <!-- ![System Demo](demo.gif) Add a demo gif later -->
 
