@@ -3,6 +3,7 @@ import yaml
 import argparse
 import os
 import json
+import re
 import audioop
 import pyaudio # type: ignore
 import webrtcvad # type: ignore
@@ -10,6 +11,16 @@ import threading
 from collections import deque
 from pathlib import Path
 from datetime import datetime
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+RUNTIME_CACHE_DIR = PROJECT_ROOT / ".runtime-cache"
+MPL_CONFIG_DIR = RUNTIME_CACHE_DIR / "matplotlib"
+YOLO_CONFIG_DIR = RUNTIME_CACHE_DIR / "ultralytics"
+MPL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+YOLO_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", str(MPL_CONFIG_DIR))
+os.environ.setdefault("YOLO_CONFIG_DIR", str(YOLO_CONFIG_DIR))
+
 from detection.face_detection import FaceDetector
 from detection.eye_tracking import EyeTracker
 from detection.mouth_detection import MouthMonitor
@@ -60,6 +71,10 @@ def parse_args():
         action="store_true",
         help="Disable screen recording for this run"
     )
+    parser.add_argument("--candidate-id", help="Candidate identifier for report metadata")
+    parser.add_argument("--candidate-name", help="Candidate full name for report metadata")
+    parser.add_argument("--exam-name", help="Exam/session name for report metadata")
+    parser.add_argument("--course-name", help="Course name for report metadata")
     return parser.parse_args()
 
 
@@ -77,6 +92,95 @@ def _safe_int_threshold(value, default_value):
     if numeric <= 1.0:
         return int(numeric * 32768)
     return int(numeric)
+
+
+def _sanitize_identifier(raw_value, fallback):
+    text = str(raw_value or "").strip()
+    if not text:
+        return fallback
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", text).strip("_")
+    return safe or fallback
+
+
+def _safe_text(raw_value, fallback):
+    text = str(raw_value or "").strip()
+    return text if text else fallback
+
+
+def _build_student_info(config, args):
+    candidate_cfg = config.get("candidate", {})
+    session_cfg = config.get("session", {})
+    default_id = f"CANDIDATE_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    candidate_id = _sanitize_identifier(
+        args.candidate_id or candidate_cfg.get("id") or session_cfg.get("candidate_id"),
+        default_id
+    )
+    candidate_name = _safe_text(
+        args.candidate_name or candidate_cfg.get("name") or session_cfg.get("candidate_name"),
+        "Unknown Candidate"
+    )
+    exam_name = _safe_text(
+        args.exam_name or candidate_cfg.get("exam") or session_cfg.get("exam"),
+        "Proctored Session"
+    )
+    course_name = _safe_text(
+        args.course_name or candidate_cfg.get("course") or session_cfg.get("course"),
+        "General"
+    )
+
+    return {
+        "id": candidate_id,
+        "name": candidate_name,
+        "exam": exam_name,
+        "course": course_name,
+    }
+
+
+def _derive_current_activity(results, allow_mouth_violations):
+    if results.get("objects_detected"):
+        return "Object Detected"
+    if not results.get("face_present", True):
+        return "Face Missing"
+    if results.get("multiple_faces"):
+        return "Multiple Faces"
+    if results.get("identity_mismatch"):
+        return "Identity Mismatch"
+    if allow_mouth_violations and results.get("mouth_moving"):
+        return "Mouth Movement"
+    if str(results.get("gaze_direction", "center")).lower() != "center":
+        return "Looking Away"
+    if results.get("voice_status") == "Detected":
+        return "Audio Detected"
+    return "Normal"
+
+
+def _estimate_cheating_probability(results, allow_mouth_violations):
+    score = 5
+    if not results.get("face_present", True):
+        score += 40
+    if results.get("multiple_faces"):
+        score += 45
+    if results.get("objects_detected"):
+        score += 50
+    if results.get("identity_mismatch"):
+        score += 50
+    if allow_mouth_violations and results.get("mouth_moving"):
+        score += 20
+    if str(results.get("gaze_direction", "center")).lower() != "center":
+        score += 15
+    if results.get("voice_status") == "Detected":
+        score += 20
+    return max(0, min(int(score), 100))
+
+
+def _write_session_status(status_file, payload):
+    try:
+        os.makedirs(os.path.dirname(status_file), exist_ok=True)
+        with open(status_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+    except Exception:
+        pass
 
 
 def _update_voice_state(audio_state, lock, status, status_file, details=None):
@@ -305,13 +409,18 @@ def main(cli_args=None):
     violation_capturer = ViolationCapturer(config)
     violation_logger = ViolationLogger(config)
     report_generator = ReportGenerator(config)
+    violation_logger.reset()
 
-    student_info = {
-        'id': 'STUDENT_001',
-        'name': 'John Doe',
-        'exam': 'Final Examination',
-        'course': 'Computer Science 101'
-    }
+    student_info = _build_student_info(config, args)
+    session_status_file = os.path.join(
+        _resolve_project_path(config["logging"]["log_path"]),
+        "session_status.json"
+    )
+    last_alert_time = None
+    latest_face_detected = False
+    latest_activity = "Initializing"
+    latest_probability = 0
+    peak_probability = 0
 
     
     # Initialize recorders
@@ -359,6 +468,18 @@ def main(cli_args=None):
             os.path.join(_resolve_project_path(config["logging"]["log_path"]), "audio_status.json"),
             f"session_mode={session_mode}"
         )
+
+    _write_session_status(session_status_file, {
+        "session_state": "starting",
+        "mode": session_mode,
+        "candidate": student_info,
+        "face_detected": False,
+        "current_activity": "Initializing",
+        "cheating_probability": 0,
+        "last_alert": None,
+        "voice_status": audio_state.get("voice_status", "Unknown"),
+        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    })
 
     try:
         if config['screen']['recording']:
@@ -446,9 +567,11 @@ def main(cli_args=None):
 
             object_triggered = results['objects_detected'] and not object_prev_detected
             object_prev_detected = results['objects_detected']
+            triggered_violation = None
 
             if object_triggered:
                 violation_type = "OBJECT_DETECTED"
+                triggered_violation = violation_type
                 alert_system.speak_alert(violation_type)
                 
                 # Capture and log violation
@@ -466,6 +589,7 @@ def main(cli_args=None):
                 # alert_system.speak_alert("OBJECT_DETECTED")
             elif not results['face_present']:
                 violation_type = "FACE_DISAPPEARED"
+                triggered_violation = violation_type
                 alert_system.speak_alert(violation_type)
                 
                 # Capture and log violation
@@ -479,6 +603,7 @@ def main(cli_args=None):
                 # alert_system.speak_alert("FACE_DISAPPEARED")
             elif results['multiple_faces']:
                 violation_type = "MULTIPLE_FACES"
+                triggered_violation = violation_type
                 alert_system.speak_alert(violation_type)
                 
                 # Capture and log violation
@@ -492,6 +617,7 @@ def main(cli_args=None):
                 # alert_system.speak_alert("MULTIPLE_FACES")
             elif results['identity_mismatch']:
                 violation_type = "IDENTITY_MISMATCH"
+                triggered_violation = violation_type
                 alert_system.speak_alert(violation_type)
 
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -524,6 +650,7 @@ def main(cli_args=None):
                 # alert_system.speak_alert("GAZE_AWAY")
             elif results['mouth_moving'] and allow_mouth_violations:
                 violation_type = "MOUTH_MOVING"
+                triggered_violation = violation_type
                 alert_system.speak_alert(violation_type)
                 
                 # Capture and log violation
@@ -535,6 +662,29 @@ def main(cli_args=None):
                     {'duration': '5+ seconds', 'frame': results}
                 )
                 # alert_system.speak_alert("MOUTH_MOVING")
+
+            if triggered_violation:
+                last_alert_time = results['timestamp']
+
+            current_activity = _derive_current_activity(results, allow_mouth_violations)
+            current_probability = _estimate_cheating_probability(results, allow_mouth_violations)
+            latest_face_detected = bool(results.get("face_present", False))
+            latest_activity = current_activity
+            latest_probability = current_probability
+            peak_probability = max(peak_probability, current_probability)
+
+            _write_session_status(session_status_file, {
+                "session_state": "running",
+                "mode": session_mode,
+                "candidate": student_info,
+                "face_detected": latest_face_detected,
+                "current_activity": latest_activity,
+                "cheating_probability": latest_probability,
+                "last_alert": last_alert_time,
+                "voice_status": results.get("voice_status", "Unknown"),
+                "latest_violation": triggered_violation,
+                "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            })
 
             
             # Display and record
@@ -564,6 +714,20 @@ def main(cli_args=None):
             print(f"Report generated: {report_path}")
         else:
             print("Report generation failed. Check logs for details.")
+
+        _write_session_status(session_status_file, {
+            "session_state": "ended",
+            "mode": session_mode,
+            "candidate": student_info,
+            "face_detected": latest_face_detected,
+            "current_activity": latest_activity if latest_activity != "Initializing" else "Session Ended",
+            "cheating_probability": max(latest_probability, peak_probability),
+            "last_alert": last_alert_time,
+            "voice_status": audio_state.get("voice_status", "Stopped"),
+            "total_violations": len(violations),
+            "report_path": report_path,
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
 
         if config['screen']['recording']:
             screen_data = screen_recorder.stop_recording()

@@ -10,8 +10,17 @@ import json
 import tempfile
 import inspect
 import re
+import os
 from collections import Counter, defaultdict
 from werkzeug.utils import secure_filename
+
+_EARLY_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_EARLY_RUNTIME_CACHE_DIR = _EARLY_PROJECT_ROOT / ".runtime-cache"
+_EARLY_MPL_CONFIG_DIR = _EARLY_RUNTIME_CACHE_DIR / "matplotlib"
+_EARLY_MPL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", str(_EARLY_MPL_CONFIG_DIR))
+os.environ.setdefault("YOLO_CONFIG_DIR", str(_EARLY_RUNTIME_CACHE_DIR / "ultralytics"))
+
 try:
     from transformers import pipeline
     TRANSFORMERS_AVAILABLE = True
@@ -28,6 +37,11 @@ except Exception:
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent.parent
+RUNTIME_CACHE_DIR = PROJECT_ROOT / ".runtime-cache"
+MPL_CONFIG_DIR = RUNTIME_CACHE_DIR / "matplotlib"
+MPL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", str(MPL_CONFIG_DIR))
+os.environ.setdefault("YOLO_CONFIG_DIR", str(RUNTIME_CACHE_DIR / "ultralytics"))
 TEMPLATES_DIR = BASE_DIR / "templates"
 UPLOADS_DIR = PROJECT_ROOT / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -57,6 +71,7 @@ IMAGES_DIR = REPORTS_DIR / "images"
 VIOLATIONS_FILE = _resolve_config_path(config['global']['output_path']) / "violations.json"
 LOG_DIR = _resolve_config_path(config['logging']['log_path'])
 VOICE_STATUS_FILE = LOG_DIR / "audio_status.json"
+SESSION_STATUS_FILE = LOG_DIR / "session_status.json"
 SEVERITY_LEVELS = config.get('reporting', {}).get('severity_levels', {})
 
 REFERENCE_SOLUTIONS_DIR = PROJECT_ROOT / "src" / "reference_solutions"
@@ -361,7 +376,66 @@ def _build_artifacts_payload():
     return payload
 
 
-def _run_analysis_job(job_id, video_path):
+def _load_json_file(path, default):
+    if not Path(path).exists():
+        return default
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def _activity_from_violation(vtype):
+    mapping = {
+        "OBJECT_DETECTED": "Object Detected",
+        "FACE_DISAPPEARED": "Face Missing",
+        "MULTIPLE_FACES": "Multiple Faces",
+        "IDENTITY_MISMATCH": "Identity Mismatch",
+        "MOUTH_MOVING": "Mouth Movement",
+        "GAZE_AWAY": "Looking Away",
+        "AUDIO_DETECTED": "Audio Detected",
+    }
+    return mapping.get(str(vtype or "").upper(), "Normal")
+
+
+def _severity_value(vtype):
+    try:
+        return int(SEVERITY_LEVELS.get(vtype, 1))
+    except Exception:
+        return 1
+
+
+def _derive_stats_from_violations(violations, voice_status):
+    if not violations:
+        return {
+            "face_detected": True,
+            "current_activity": "Normal",
+            "cheating_probability": 0,
+            "last_alert": "-",
+            "voice_status": voice_status,
+        }
+
+    latest = violations[-1]
+    latest_type = latest.get("type", "")
+    latest_dt = _parse_violation_time(latest.get("timestamp"))
+    last_alert = latest_dt.strftime("%H:%M:%S") if latest_dt else "-"
+
+    recent = violations[-20:]
+    severity_sum = sum(_severity_value(v.get("type")) for v in recent)
+    max_possible = max(len(recent) * 5, 1)
+    cheating_probability = int(min(100, (severity_sum / max_possible) * 100))
+
+    return {
+        "face_detected": str(latest_type).upper() != "FACE_DISAPPEARED",
+        "current_activity": _activity_from_violation(latest_type),
+        "cheating_probability": cheating_probability,
+        "last_alert": last_alert,
+        "voice_status": voice_status,
+    }
+
+
+def _run_analysis_job(job_id, video_path, candidate_meta=None):
     cmd = [
         sys.executable,
         str(PROJECT_ROOT / "src" / "main.py"),
@@ -371,6 +445,18 @@ def _run_analysis_job(job_id, video_path):
         "--disable-audio",
         "--no-screen-recording",
     ]
+
+    candidate_meta = candidate_meta or {}
+    cli_meta_map = {
+        "--candidate-id": candidate_meta.get("id"),
+        "--candidate-name": candidate_meta.get("name"),
+        "--exam-name": candidate_meta.get("exam"),
+        "--course-name": candidate_meta.get("course"),
+    }
+    for flag, value in cli_meta_map.items():
+        text = str(value or "").strip()
+        if text:
+            cmd.extend([flag, text])
 
     output_lines = []
     report_path = None
@@ -454,13 +540,19 @@ def get_stats():
         except Exception:
             voice_status = "Unknown"
 
-    return jsonify({
-        'face_detected': True,
-        'current_activity': 'Normal',
-        'cheating_probability': 15,
-        'last_alert': datetime.now().strftime("%H:%M:%S"),
-        'voice_status': voice_status
-    })
+    live_status = _load_json_file(SESSION_STATUS_FILE, {})
+    if isinstance(live_status, dict) and live_status:
+        return jsonify({
+            "face_detected": bool(live_status.get("face_detected", False)),
+            "current_activity": str(live_status.get("current_activity", "Normal")),
+            "cheating_probability": int(live_status.get("cheating_probability", 0)),
+            "last_alert": live_status.get("last_alert") or "-",
+            "voice_status": live_status.get("voice_status") or voice_status,
+        })
+
+    violations = _load_json_file(VIOLATIONS_FILE, [])
+    stats = _derive_stats_from_violations(violations if isinstance(violations, list) else [], voice_status)
+    return jsonify(stats)
 
 
 @app.route('/api/upload-video', methods=['POST'])
@@ -478,11 +570,19 @@ def upload_video():
     safe_name = secure_filename(file.filename)
     saved_path = UPLOADS_DIR / f"{timestamp}_{safe_name}"
     file.save(saved_path)
+    default_candidate_id = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(safe_name).stem).strip("_") or f"CANDIDATE_{timestamp}"
+    candidate_meta = {
+        "id": (request.form.get("candidate_id") or default_candidate_id).strip(),
+        "name": (request.form.get("candidate_name") or "Uploaded Candidate").strip(),
+        "exam": (request.form.get("exam_name") or "Uploaded Session").strip(),
+        "course": (request.form.get("course_name") or "General").strip(),
+    }
 
     job_id = uuid.uuid4().hex
     JOBS[job_id] = {
         "status": "queued",
         "video_path": str(saved_path),
+        "candidate": candidate_meta,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "report_path": None,
         "report_download_url": None,
@@ -491,7 +591,7 @@ def upload_video():
 
     threading.Thread(
         target=_run_analysis_job,
-        args=(job_id, saved_path),
+        args=(job_id, saved_path, candidate_meta),
         daemon=True
     ).start()
 

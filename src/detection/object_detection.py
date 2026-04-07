@@ -72,9 +72,18 @@
 
 
 import cv2
+import os
+from pathlib import Path
+
+# Keep third-party runtime cache inside project to avoid permission issues
+# on locked-down environments where user profile paths are not writable.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_RUNTIME_CACHE_DIR = _PROJECT_ROOT / ".runtime-cache" / "ultralytics"
+_RUNTIME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("YOLO_CONFIG_DIR", str(_RUNTIME_CACHE_DIR))
+
 from ultralytics import YOLO, RTDETR
 from datetime import datetime
-from pathlib import Path
 
 class ObjectDetector:
     def __init__(self, config):

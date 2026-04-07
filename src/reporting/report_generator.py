@@ -1,5 +1,12 @@
 import os
 import pdfkit
+
+# Force a writable Matplotlib cache/config directory inside the project.
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_MPL_CONFIG_DIR = os.path.join(_PROJECT_ROOT, ".runtime-cache", "matplotlib")
+os.makedirs(_MPL_CONFIG_DIR, exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", _MPL_CONFIG_DIR)
+
 import matplotlib
 matplotlib.use('Agg')  # Set non-interactive backend
 from jinja2 import Environment, FileSystemLoader
