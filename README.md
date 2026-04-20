@@ -13,13 +13,16 @@ A computer vision system that detects suspicious activities during online exams 
 - **Multi-Face Detection**: Alerts when multiple faces appear in frame
 - **Same Candidate Recognition**: Enrolls candidate face embeddings and flags `IDENTITY_MISMATCH` if a different person appears
 - **Real-time Alerts**: Flags suspicious activities with timestamps
+- **Interview Mode Policy**: `exam` mode runs strict checks, while `interview` mode allows speaking (no voice/mouth speaking violations)
 - **Dashboard**: Visual interface showing detection metrics and alerts
+- **Dashboard Upload + Background Jobs**: Upload recorded sessions and run server-side analysis in headless mode
 - **Object Delection**: Object Detection: Detects prohibited objects (cell phone, book, etc.).
 - **Screen Recoding**: Continuously captures examinee's screen activity
-- **Audio Detection**: Monitors for voice/whispering in student's environment
+- **Real-Time Audio VAD**: Uses WebRTCVAD + RMS debounce to detect sustained speech/loud events with cooldown control
 - **Alert Speaker**: Delivers real-time verbal warnings via text-to-speech
 - **Report Generation**: Creates detailed visual PDF and HTML reports with violations summary, heatmaps, and activity timeline with non-overlapping point annotations  
 - **Dual Object Detection Modes**: Normal mode uses `YOLO26n` for speed, strict mode uses `RT-DETR` for higher precision.
+- **Code Integrity Analysis**: Dashboard API computes plagiarism score (`copydetect` + fallback scorer) and AI-generated code probability (`transformers`)
 
 
 ## Technologies Used
@@ -27,8 +30,12 @@ A computer vision system that detects suspicious activities during online exams 
 - Python 3.8+
 - OpenCV (for computer vision)
 - MediaPipe (for face mesh and landmark detection)
-- FaceNet-PyTorch (for face detection)
-- MTCNN (for face detection)
+- FaceNet-PyTorch (MTCNN face detection + InceptionResnetV1 face embeddings)
+- Ultralytics (YOLO26n / RT-DETR object detection)
+- PyAudio + WebRTCVAD + audioop (real-time voice monitoring)
+- gTTS + pygame (voice alerts)
+- matplotlib + jinja2 + pdfkit (reporting pipeline)
+- copydetect + transformers (code plagiarism + AI probability scoring)
 - Flask (for dashboard)
 
 ## Installation
@@ -88,14 +95,26 @@ detection:
     mismatch_consecutive: 3   # trigger after N consecutive mismatches
     min_face_confidence: 0.90 # clear single-face requirement
   objects:
-    min_confidence: 0.65  # Detection confidence threshold
-    detection_interval: 5 # frames between detections
+    strict_mode: false
+    min_confidence: 0.35  # Detection confidence threshold
+    detection_interval: 1 # frames between detections
     max_fps: 5            # Maximum detection frames per second
+    imgsz: 1024
+    model_candidates: ["yolo26n.pt", "yolo11n.pt", "yolov8n.pt"]
+    strict_model_candidates: ["rtdetr-l.pt", "rtdetr-x.pt"]
+    target_objects: ["book", "cell phone"]
+    class_min_confidence:
+      book: 0.35
+      cell phone: 0.25
   audio_monitoring:
     enabled: true
     sample_rate: 16000
-    energy_threshold: 0.001
+    energy_threshold: 1200
     zcr_threshold: 0.35
+    debounce_window_frames: 20
+    speech_trigger_frames: 6
+    loud_trigger_frames: 8
+    violation_cooldown_seconds: 4.0
     whisper_enabled: false  # Enable only when needed
     whisper_model: "tiny.en"
         
@@ -202,8 +221,12 @@ python src/main.py --disable-objects
 ```
 ### Code Analysis Module
 
-On the dashboard, click the code analysis tab and paste the code. AI likelihood score will be calculated.
-For plag, add solution files in src/reference_solutions. 
+On the dashboard, click the code analysis tab and paste the code.
+- `plagiarism_score` is computed using `copydetect` when available, with normalized similarity fallback.
+- `ai_probability` is computed via `transformers` text-classification pipeline.
+- `risk_level` is derived from max(plagiarism_score, ai_probability).
+
+For plagiarism comparison, add reference files in `src/reference_solutions`. 
 
 ## Start Fresh For New Candidate
 
