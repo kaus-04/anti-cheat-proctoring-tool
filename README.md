@@ -250,9 +250,7 @@ Solution:
     - Remove glasses if they cause glare
     - Adjust camera position to be face-level
 
-Problem: Book detection working, but not perfect
-
-Solution:
+Problem: Book/Phone detection working, but not perfect
     -
 
 ## Contributing
