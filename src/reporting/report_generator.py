@@ -1,5 +1,12 @@
 import os
 import pdfkit
+
+# Force a writable Matplotlib cache/config directory inside the project.
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_MPL_CONFIG_DIR = os.path.join(_PROJECT_ROOT, ".runtime-cache", "matplotlib")
+os.makedirs(_MPL_CONFIG_DIR, exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", _MPL_CONFIG_DIR)
+
 import matplotlib
 matplotlib.use('Agg')  # Set non-interactive backend
 from jinja2 import Environment, FileSystemLoader
@@ -39,6 +46,7 @@ class ReportGenerator:
             'MOUTH_MOVING': 3,
             'MULTIPLE_FACES': 4,
             'OBJECT_DETECTED': 5,
+            'IDENTITY_MISMATCH': 5,
             'AUDIO_DETECTED': 3
         }
 
@@ -150,15 +158,22 @@ class ReportGenerator:
             
         try:
             # Prepare data
-            times = []
-            severities = []
-            labels = []
-            
+            events = []
             for violation in violations:
                 timestamp = datetime.strptime(violation['timestamp'], "%Y%m%d_%H%M%S_%f")
-                times.append(timestamp)
-                severities.append(self.severity_map.get(violation['type'], 1))
-                labels.append(violation['type'])
+                events.append(
+                    (
+                        timestamp,
+                        self.severity_map.get(violation['type'], 1),
+                        violation['type']
+                    )
+                )
+
+            # Keep timeline deterministic and easier to annotate.
+            events.sort(key=lambda item: item[0])
+            times = [item[0] for item in events]
+            severities = [item[1] for item in events]
+            labels = [item[2] for item in events]
             
             # Create figure
             plt.figure(figsize=(12, 5))
@@ -167,15 +182,43 @@ class ReportGenerator:
             # Plot timeline
             plt.plot(times, severities, 'o-', markersize=8)
             
-            # Add labels
+            # Assign non-overlapping label lanes for nearby points.
+            if len(times) > 1:
+                total_span_seconds = max((times[-1] - times[0]).total_seconds(), 1.0)
+            else:
+                total_span_seconds = 1.0
+            reuse_gap_seconds = max(2.0, total_span_seconds / 25.0)
+            lane_last_time = []
+
+            # Add labels with lane-based staggering.
             for i, (time, severity, label) in enumerate(zip(times, severities, labels)):
+                t_seconds = time.timestamp()
+                lane_index = None
+                for lane_i, last_seconds in enumerate(lane_last_time):
+                    if (t_seconds - last_seconds) > reuse_gap_seconds:
+                        lane_index = lane_i
+                        lane_last_time[lane_i] = t_seconds
+                        break
+                if lane_index is None:
+                    lane_index = len(lane_last_time)
+                    lane_last_time.append(t_seconds)
+
+                direction = 1 if lane_index % 2 == 0 else -1
+                band = lane_index // 2
+                y_offset = direction * (14 + (band * 10))
+                x_cycle = [-10, 0, 10]
+                x_offset = x_cycle[band % len(x_cycle)]
+
                 plt.annotate(
                     label,
                     (time, severity),
                     textcoords="offset points",
-                    xytext=(0, 10),
+                    xytext=(x_offset, y_offset),
                     ha='center',
-                    fontsize=8
+                    va='bottom' if direction > 0 else 'top',
+                    fontsize=8,
+                    bbox=dict(boxstyle='round,pad=0.2', fc='white', ec='none', alpha=0.75),
+                    arrowprops=dict(arrowstyle='-', lw=0.6, alpha=0.6, color='gray')
                 )
             
             # Format plot

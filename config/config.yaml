@@ -26,15 +26,24 @@ detection:
     movement_threshold: 3     # consecutive frames
   multi_face:
     alert_threshold: 5        # frames
+  identity_verification:
+    enrollment_samples: 24    # frames used to build stable baseline embedding
+    check_interval: 10        # run identity verification every N frames
+    distance_threshold: 0.45  # cosine distance threshold for mismatch
+    mismatch_consecutive: 3   # trigger after N consecutive mismatches
+    min_face_confidence: 0.90 # require a clear single face for enrollment/checks
   objects:
+    strict_mode: false
     min_confidence: 0.35  # Lower threshold improves small-object recall (phone/book)
-    detection_interval: 5 # frames between detections
+    detection_interval: 1 # run every frame in async worker (FPS throttled separately)
     max_fps: 5            # Maximum detection frames per second
-    imgsz: 640            # Inference resolution for YOLO
+    imgsz: 1024           # Higher resolution improves small-object recall
+    model_candidates: ["yolo26n.pt", "yolo11n.pt", "yolov8n.pt"]
+    strict_model_candidates: ["rtdetr-l.pt", "rtdetr-x.pt"]
     target_objects: ["book", "cell phone"]
     class_min_confidence:
       book: 0.35
-      cell phone: 0.18
+      cell phone: 0.25
   audio_monitoring:
     enabled: true
     sample_rate: 16000
@@ -69,4 +78,5 @@ reporting:
     MOUTH_MOVING: 3
     MULTIPLE_FACES: 4
     OBJECT_DETECTED: 5
+    IDENTITY_MISMATCH: 5
     AUDIO_DETECTED: 3

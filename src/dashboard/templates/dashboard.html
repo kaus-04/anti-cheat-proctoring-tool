@@ -13,6 +13,7 @@
       --accent: #0f766e;
       --accent2: #2563eb;
       --accent3: #ea580c;
+      --danger: #b91c1c;
       --border: #e5e7eb;
     }
     * { box-sizing: border-box; }
@@ -24,7 +25,7 @@
       padding: 24px;
     }
     .container {
-      max-width: 960px;
+      max-width: 1040px;
       margin: 0 auto;
       display: grid;
       gap: 16px;
@@ -37,9 +38,25 @@
     }
     h1, h2, h3 { margin: 0 0 10px; }
     .muted { color: var(--muted); }
+    .tabs { display: flex; gap: 8px; }
+    .tab-btn {
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .tab-btn.active {
+      background: var(--accent2);
+      color: #fff;
+      border-color: var(--accent2);
+    }
+    .tab-view.hidden { display: none; }
     .stats {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 12px;
     }
     .stat {
@@ -52,7 +69,7 @@
     .grid-2 {
       display: grid;
       gap: 16px;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     }
     .row {
       display: flex;
@@ -60,13 +77,18 @@
       flex-wrap: wrap;
       align-items: center;
     }
-    input[type="file"] {
+    input[type="file"], textarea {
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 10px;
       background: #fff;
       width: 100%;
-      max-width: 420px;
+    }
+    textarea {
+      min-height: 240px;
+      resize: vertical;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
     }
     button, .btn-link {
       border: none;
@@ -79,9 +101,7 @@
       text-decoration: none;
       display: inline-block;
     }
-    .btn-secondary {
-      background: var(--accent2);
-    }
+    .btn-secondary { background: var(--accent2); }
     button:disabled, .btn-link.disabled {
       opacity: 0.6;
       cursor: not-allowed;
@@ -139,10 +159,25 @@
       overflow: hidden;
       height: 16px;
     }
-    .bar-fill {
-      height: 100%;
-      border-radius: 999px;
+    .bar-fill { height: 100%; border-radius: 999px; }
+    .metric {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
     }
+    .metric-title { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+    .metric-value { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+    .risk-pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 12px;
+      color: #fff;
+    }
+    .risk-low { background: #0f766e; }
+    .risk-medium { background: #ca8a04; }
+    .risk-high { background: var(--danger); }
     .hidden { display: none; }
     ul {
       margin: 0;
@@ -156,82 +191,117 @@
   <div class="container">
     <div class="card">
       <h1>Exam Monitoring Dashboard</h1>
-      <p class="muted">Live summary of alerts and detection status.</p>
-    </div>
-
-    <div class="card">
-      <h2>Current Stats</h2>
-      <div class="stats">
-        <div class="stat">
-          <div class="label">Face Detected</div>
-          <div class="value" id="face-detected">-</div>
-        </div>
-        <div class="stat">
-          <div class="label">Current Activity</div>
-          <div class="value" id="activity">-</div>
-        </div>
-        <div class="stat">
-          <div class="label">Cheating Probability</div>
-          <div class="value" id="probability">-</div>
-        </div>
-        <div class="stat">
-          <div class="label">Last Alert Time</div>
-          <div class="value" id="last-alert">-</div>
-        </div>
-        <div class="stat">
-          <div class="label">Voice Status</div>
-          <div class="value" id="voice-status">-</div>
-        </div>
+      <p class="muted">Monitoring + code integrity analysis</p>
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="proctoring">Proctoring</button>
+        <button class="tab-btn" data-tab="code-analysis">Code Analysis</button>
       </div>
     </div>
 
-    <div class="card">
-      <h2>Analyze Recorded Video</h2>
-      <div class="row">
-        <input type="file" id="video-file" accept=".mp4,.avi,.mov,.mkv,.webm">
-        <button id="upload-btn" type="button">Upload And Analyze</button>
-        <a id="download-report-btn" class="btn-link btn-secondary disabled" href="#" download>Download Latest Report</a>
+    <div id="tab-proctoring" class="tab-view">
+      <div class="card">
+        <h2>Current Stats</h2>
+        <div class="stats">
+          <div class="stat"><div class="label">Face Detected</div><div class="value" id="face-detected">-</div></div>
+          <div class="stat"><div class="label">Current Activity</div><div class="value" id="activity">-</div></div>
+          <div class="stat"><div class="label">Cheating Probability</div><div class="value" id="probability">-</div></div>
+          <div class="stat"><div class="label">Last Alert Time</div><div class="value" id="last-alert">-</div></div>
+          <div class="stat"><div class="label">Voice Status</div><div class="value" id="voice-status">-</div></div>
+        </div>
       </div>
-      <div class="status" id="job-status">No analysis running.</div>
-      <div class="status" id="report-path"></div>
-      <pre id="job-log">Logs will appear here after upload.</pre>
+
+      <div class="card">
+        <h2>Analyze Recorded Video</h2>
+        <div class="row">
+          <input type="file" id="video-file" accept=".mp4,.avi,.mov,.mkv,.webm">
+          <button id="upload-btn" type="button">Upload And Analyze</button>
+          <a id="download-report-btn" class="btn-link btn-secondary disabled" href="#" download>Download Latest Report</a>
+        </div>
+        <div class="status" id="job-status">No analysis running.</div>
+        <div class="status" id="report-path"></div>
+        <pre id="job-log">Logs will appear here after upload.</pre>
+      </div>
+
+      <div class="card">
+        <h2>Report Visualizations</h2>
+        <div class="grid-2">
+          <div class="image-box">
+            <h3>Activity Timeline</h3>
+            <img id="timeline-image" class="hidden" alt="Activity timeline visualization">
+            <div id="timeline-empty" class="muted">No timeline image available yet.</div>
+          </div>
+          <div class="image-box">
+            <h3>Violation Heatmap</h3>
+            <img id="heatmap-image" class="hidden" alt="Violation heatmap visualization">
+            <div id="heatmap-empty" class="muted">No heatmap image available yet.</div>
+          </div>
+        </div>
+        <div class="grid-2" style="margin-top: 16px;">
+          <div class="chart-box">
+            <h3>Violation Type Frequency</h3>
+            <div id="type-frequency-chart" class="muted">No data yet.</div>
+          </div>
+          <div class="chart-box">
+            <h3>Violations By Minute</h3>
+            <div id="minute-trend-chart" class="muted">No data yet.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Recent Alerts</h2>
+        <ul id="alerts-list"><li class="muted">No alerts yet.</li></ul>
+      </div>
     </div>
 
-    <div class="card">
-      <h2>Report Visualizations</h2>
-      <div class="grid-2">
-        <div class="image-box">
-          <h3>Activity Timeline</h3>
-          <img id="timeline-image" class="hidden" alt="Activity timeline visualization">
-          <div id="timeline-empty" class="muted">No timeline image available yet.</div>
-        </div>
-        <div class="image-box">
-          <h3>Violation Heatmap</h3>
-          <img id="heatmap-image" class="hidden" alt="Violation heatmap visualization">
-          <div id="heatmap-empty" class="muted">No heatmap image available yet.</div>
+    <div id="tab-code-analysis" class="tab-view hidden">
+      <div class="card">
+        <h2>Code Analysis</h2>
+        <p class="muted">Paste candidate code and run plagiarism + AI-generation risk checks.</p>
+        <textarea id="code-input" placeholder="Paste source code here..."></textarea>
+        <div class="row" style="margin-top: 10px;">
+          <button id="run-code-analysis" type="button">Run Analysis</button>
+          <div id="code-analysis-status" class="status">Idle.</div>
         </div>
       </div>
-      <div class="grid-2" style="margin-top: 16px;">
-        <div class="chart-box">
-          <h3>Violation Type Frequency</h3>
-          <div id="type-frequency-chart" class="muted">No data yet.</div>
-        </div>
-        <div class="chart-box">
-          <h3>Violations By Minute</h3>
-          <div id="minute-trend-chart" class="muted">No data yet.</div>
-        </div>
-      </div>
-    </div>
 
-    <div class="card">
-      <h2>Recent Alerts</h2>
-      <ul id="alerts-list">
-        <li class="muted">No alerts yet.</li>
-      </ul>
+      <div class="card">
+        <h2>Results</h2>
+        <div class="grid-2">
+          <div class="metric">
+            <div class="metric-title">Plagiarism Score</div>
+            <div class="metric-value" id="plagiarism-score">0%</div>
+            <div class="bar-bg"><div class="bar-fill" id="plagiarism-bar" style="width:0%;background:var(--accent2);"></div></div>
+          </div>
+          <div class="metric">
+            <div class="metric-title">AI Probability</div>
+            <div class="metric-value" id="ai-probability">0%</div>
+            <div class="bar-bg"><div class="bar-fill" id="ai-bar" style="width:0%;background:var(--accent3);"></div></div>
+          </div>
+        </div>
+        <div style="margin-top: 12px;">
+          <span class="metric-title">Risk Level:</span>
+          <span id="risk-level-pill" class="risk-pill risk-low">Low</span>
+        </div>
+        <pre id="code-analysis-warnings">No warnings.</pre>
+      </div>
     </div>
   </div>
 
   <script>
+    function switchTab(tabName) {
+      const isProctoring = tabName === 'proctoring';
+      document.getElementById('tab-proctoring').classList.toggle('hidden', !isProctoring);
+      document.getElementById('tab-code-analysis').classList.toggle('hidden', isProctoring);
+      document.querySelectorAll('.tab-btn').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.tab === tabName);
+      });
+    }
+
+    document.querySelectorAll('.tab-btn').forEach((btn) => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+
     async function refreshStats() {
       const res = await fetch('/api/stats');
       const data = await res.json();
@@ -261,10 +331,6 @@
       });
     }
 
-    async function refreshAll() {
-      await Promise.all([refreshStats(), refreshAlerts()]);
-    }
-
     let currentJobId = null;
     let jobPollTimer = null;
 
@@ -288,17 +354,12 @@
         return;
       }
       container.className = '';
-
       const maxVal = Math.max(...values, 1);
       labels.forEach((label, i) => {
         const val = values[i];
         const row = document.createElement('div');
         row.className = 'bar-row';
-        row.innerHTML = `
-          <div>${label}</div>
-          <div class="bar-bg"><div class="bar-fill" style="width:${(val / maxVal) * 100}%;background:${color};"></div></div>
-          <div style="text-align:right">${val}</div>
-        `;
+        row.innerHTML = `<div>${label}</div><div class="bar-bg"><div class="bar-fill" style="width:${(val / maxVal) * 100}%;background:${color};"></div></div><div style="text-align:right">${val}</div>`;
         container.appendChild(row);
       });
     }
@@ -341,16 +402,10 @@
     }
 
     function renderJob(job) {
-      const statusEl = document.getElementById('job-status');
-      const reportEl = document.getElementById('report-path');
-      const logEl = document.getElementById('job-log');
-
-      statusEl.textContent = `Status: ${job.status}`;
-      reportEl.textContent = job.report_path ? `Report: ${job.report_path}` : '';
+      document.getElementById('job-status').textContent = `Status: ${job.status}`;
+      document.getElementById('report-path').textContent = job.report_path ? `Report: ${job.report_path}` : '';
       setDownloadButton(job.report_download_url || null);
-      logEl.textContent = (job.log_tail && job.log_tail.length)
-        ? job.log_tail.join('\n')
-        : 'No logs yet.';
+      document.getElementById('job-log').textContent = (job.log_tail && job.log_tail.length) ? job.log_tail.join('\n') : 'No logs yet.';
     }
 
     async function pollJob() {
@@ -384,10 +439,7 @@
       button.disabled = true;
       statusEl.textContent = 'Uploading...';
 
-      const res = await fetch('/api/upload-video', {
-        method: 'POST',
-        body: formData
-      });
+      const res = await fetch('/api/upload-video', { method: 'POST', body: formData });
       const payload = await res.json();
 
       if (!payload.ok) {
@@ -404,10 +456,58 @@
       jobPollTimer = setInterval(pollJob, 2000);
     }
 
+    async function runCodeAnalysis() {
+      const code = document.getElementById('code-input').value;
+      const statusEl = document.getElementById('code-analysis-status');
+      const btn = document.getElementById('run-code-analysis');
+      if (!code.trim()) {
+        statusEl.textContent = 'Paste code before running analysis.';
+        return;
+      }
+
+      btn.disabled = true;
+      statusEl.textContent = 'Analyzing plagiarism and AI signals...';
+
+      const res = await fetch('/api/code-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code })
+      });
+      const payload = await res.json();
+      btn.disabled = false;
+
+      if (!payload.ok) {
+        statusEl.textContent = `Analysis failed: ${payload.error || 'Unknown error'}`;
+        return;
+      }
+
+      statusEl.textContent = 'Analysis complete.';
+
+      const p = Number(payload.plagiarism_score || 0);
+      const a = Number(payload.ai_probability || 0);
+      const risk = payload.risk_level || 'Low';
+
+      document.getElementById('plagiarism-score').textContent = `${p.toFixed(2)}%`;
+      document.getElementById('ai-probability').textContent = `${a.toFixed(2)}%`;
+      document.getElementById('plagiarism-bar').style.width = `${Math.min(Math.max(p, 0), 100)}%`;
+      document.getElementById('ai-bar').style.width = `${Math.min(Math.max(a, 0), 100)}%`;
+
+      const pill = document.getElementById('risk-level-pill');
+      pill.textContent = risk;
+      pill.className = 'risk-pill';
+      if (risk === 'High') pill.classList.add('risk-high');
+      else if (risk === 'Medium') pill.classList.add('risk-medium');
+      else pill.classList.add('risk-low');
+
+      const warnings = payload.warnings && payload.warnings.length ? payload.warnings.join('\n') : 'No warnings.';
+      document.getElementById('code-analysis-warnings').textContent = warnings;
+    }
+
     document.getElementById('upload-btn').addEventListener('click', uploadAndAnalyze);
+    document.getElementById('run-code-analysis').addEventListener('click', runCodeAnalysis);
 
     async function refreshDashboard() {
-      await Promise.all([refreshAll(), refreshArtifacts(), refreshVisualizations()]);
+      await Promise.all([refreshStats(), refreshAlerts(), refreshArtifacts(), refreshVisualizations()]);
     }
 
     refreshDashboard();

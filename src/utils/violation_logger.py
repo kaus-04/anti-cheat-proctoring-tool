@@ -5,7 +5,13 @@ from datetime import datetime
 class ViolationLogger:
     def __init__(self, config):
         self.log_file = os.path.join(config['global']['output_path'], "violations.json")
+        os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
         self.violations = []
+
+    def reset(self):
+        """Start a fresh session log."""
+        self.violations = []
+        self._save_to_file()
         
     def log_violation(self, violation_type, timestamp=None, metadata=None):
         """Logs a violation with timestamp and metadata"""

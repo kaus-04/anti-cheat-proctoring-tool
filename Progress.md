@@ -8,7 +8,7 @@
 | Gaze-Away Violation Logging Pipeline | In-Progress | `src/main.py` (branch currently commented for `GAZE_AWAY`) |
 | Mouth Movement Detection | Completed | `src/detection/mouth_detection.py`, `src/main.py` |
 | Multi-Face Detection | Completed | `src/detection/multi_face.py`, `src/main.py` |
-| Object Detection (Book / Cell Phone) | Completed | `src/detection/object_detection.py`, `config/config.yaml` |
+| Object Detection (Normal: YOLO26n, Strict: RT-DETR) | Completed | `src/detection/object_detection.py`, `src/main.py`, `config/config.yaml` |
 | Real-Time Audio VAD (WebRTCVAD + RMS Debounce) | Completed | `src/main.py` |
 | Interview Mode Policy (speech/mouth allowed) | Completed | `src/main.py`, `config/config.yaml` |
 | Webcam Recording | Completed | `src/utils/video_utils.py`, `src/main.py` |
@@ -18,17 +18,22 @@
 | Report Generation (PDF/HTML + Timeline + Heatmap) | Completed | `src/reporting/report_generator.py`, `src/reporting/templates/base_report.html` |
 | Dashboard Upload + Background Analysis Jobs | Completed | `src/dashboard/app.py`, `src/dashboard/templates/dashboard.html` |
 | Dashboard Report Download + Visualizations | Completed | `src/dashboard/app.py`, `src/dashboard/templates/dashboard.html` |
-| Identity Verification / Candidate Matching | Planned | N/A |
+| Code Plagiarism Analysis API (`/api/code-analysis`) | Completed | `src/dashboard/app.py` |
+| AI-Generated Code Probability Scoring | Completed | `src/dashboard/app.py` |
+| Dashboard Code Analysis Tab (input + progress bars) | Completed | `src/dashboard/templates/dashboard.html` |
+| Identity Verification / Candidate Matching | Completed | `src/detection/identity_verification.py`, `src/main.py`, `config/config.yaml` |
 
 ## 2) Technical Stack & Dependencies
 - `opencv-python`: frame capture, drawing overlays, display loop, and video encoding helpers.
 - `facenet-pytorch` (`MTCNN`): primary face presence detector in live loop.
 - `mediapipe` (`FaceMesh`, `refine_landmarks=True`): eye landmarks, iris-aware gaze estimation, mouth geometry.
-- `ultralytics` (`YOLO`): prohibited object detection (`book`, `cell phone`) with class-specific confidence.
+- `ultralytics` (`YOLO`, `RTDETR`): dual object detection backends (`YOLO26n` normal mode, `RT-DETR` strict mode).
 - `pyaudio`: microphone stream capture (`16kHz`, mono, int16).
 - `webrtcvad` (Mode 3): strict speech activity filtering from raw audio frames.
 - `audioop`: RMS energy calculation for sustained non-speech loudness events.
 - `flask`: dashboard server, upload API, job polling API, artifact/report serving.
+- `copydetect`: plagiarism similarity analysis against local `src/reference_solutions/`.
+- `transformers`: AI-generated text/code probability scoring via startup-loaded text classifier pipeline.
 - `matplotlib`: timeline + heatmap rendering for report artifacts.
 - `jinja2`: report HTML templating.
 - `pdfkit`: HTML-to-PDF export.
@@ -44,7 +49,7 @@ src/
     eye_tracking.py            # EAR + fused head/iris gaze direction estimation
     mouth_detection.py         # Mouth movement detection
     multi_face.py              # Multiple-face detection
-    object_detection.py        # YOLO object detector with target class filtering
+    object_detection.py        # Dual backend object detector (YOLO26n normal / RT-DETR strict)
     audio_detection.py         # Legacy/alternate audio monitor implementation (currently not main execution path)
   utils/
     video_utils.py             # Webcam recording writer lifecycle
@@ -57,8 +62,8 @@ src/
     report_generator.py        # Builds stats + images + PDF/HTML report artifact
     templates/base_report.html # Report template
   dashboard/
-    app.py                     # Flask APIs (upload/job/artifacts/stats/download)
-    templates/dashboard.html   # Dashboard UI (upload, status, charts, report download)
+    app.py                     # Flask APIs (upload/job/artifacts/stats/download/code-analysis)
+    templates/dashboard.html   # Dashboard UI (proctoring tab + code analysis tab)
 ```
 
 ## 4) Current Session Handover
@@ -77,6 +82,30 @@ src/
   - class-name normalization/aliases.
   - class-specific confidence support.
   - lower confidence floor for `cell phone`.
+- Finalized object detection runtime modes:
+  - Normal mode uses `YOLO26n` (fast path).
+  - Strict mode uses `RT-DETR` (higher precision path).
+  - Added CLI flags: `--strict-objects`, `--disable-objects`.
+- Added code analysis subsystem in dashboard:
+  - `POST /api/code-analysis` accepts raw code.
+  - Plagiarism scoring via `copydetect` (with safe fallback scorer).
+  - AI probability scoring via startup-loaded `transformers` pipeline.
+  - Risk level classification and warning propagation.
+- Added dashboard Code Analysis tab:
+  - code textarea input.
+  - run analysis action.
+  - plagiarism/AI progress bars + risk badge.
+- Hardened startup behavior:
+  - dashboard no longer crashes when `transformers` is missing.
+  - AI detector is marked unavailable with warning instead.
+- Added same-candidate identity verification:
+  - enrollment baseline from multiple clear face embeddings.
+  - periodic cosine-distance checks against baseline.
+  - `IDENTITY_MISMATCH` violation routing with screenshot + timestamp metadata.
+  - fail-safe runtime behavior when embedding model is unavailable.
+- Improved report timeline readability:
+  - non-overlapping/staggered annotation placement for dense events.
+  - connector lines and label background boxes for clearer labels.
 
 ### Next Steps / Known Gaps
 - Re-enable and harden **`GAZE_AWAY` violation branch** in `main.py` (currently commented).
@@ -87,6 +116,9 @@ src/
 - Replace mocked dashboard stats (`face_detected/current_activity/probability`) with live runtime feed.
 - Add persistent session metadata (`candidate_id`, `mode`) into violations/report header.
 - Add tests for mode-policy behavior (exam vs interview) and object threshold regressions.
+- Add dashboard toggle passthrough for object mode (`normal`/`strict`) and disable flag.
+- Install and validate `copydetect` in runtime environment (currently optional fallback path exists).
+- Install and validate `transformers` model download in runtime environment for live AI scoring.
 
 ## 5) Configuration State (`config/config.yaml`)
 ### Session / Runtime
@@ -107,12 +139,20 @@ src/
 | Eyes | `detection.eyes.consecutive_frames` | `3` |
 | Mouth | `detection.mouth.movement_threshold` | `3` |
 | Multi-face | `detection.multi_face.alert_threshold` | `5` |
+| Identity | `detection.identity_verification.enrollment_samples` | `24` |
+| Identity | `detection.identity_verification.check_interval` | `10` |
+| Identity | `detection.identity_verification.distance_threshold` | `0.45` |
+| Identity | `detection.identity_verification.mismatch_consecutive` | `3` |
+| Identity | `detection.identity_verification.min_face_confidence` | `0.90` |
+| Objects | `detection.objects.strict_mode` | `false` |
 | Objects | `detection.objects.min_confidence` | `0.35` |
 | Objects | `detection.objects.class_min_confidence.book` | `0.35` |
-| Objects | `detection.objects.class_min_confidence.cell phone` | `0.18` |
-| Objects | `detection.objects.detection_interval` | `5` |
+| Objects | `detection.objects.class_min_confidence.cell phone` | `0.25` |
+| Objects | `detection.objects.detection_interval` | `1` |
 | Objects | `detection.objects.max_fps` | `5` |
-| Objects | `detection.objects.imgsz` | `640` |
+| Objects | `detection.objects.imgsz` | `1024` |
+| Objects | `detection.objects.model_candidates` | `["yolo26n.pt", "yolo11n.pt", "yolov8n.pt"]` |
+| Objects | `detection.objects.strict_model_candidates` | `["rtdetr-l.pt", "rtdetr-x.pt"]` |
 | Audio | `detection.audio_monitoring.sample_rate` | `16000` |
 | Audio | `detection.audio_monitoring.energy_threshold` | `1200` |
 | Audio | `detection.audio_monitoring.debounce_window_frames` | `20` |

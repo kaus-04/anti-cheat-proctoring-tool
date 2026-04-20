@@ -11,13 +11,15 @@ A computer vision system that detects suspicious activities during online exams 
 - **Gaze Analysis**: Monitors direction of eye gaze
 - **Mouth Movement Detection**: Identifies potential talking or whispering
 - **Multi-Face Detection**: Alerts when multiple faces appear in frame
+- **Same Candidate Recognition**: Enrolls candidate face embeddings and flags `IDENTITY_MISMATCH` if a different person appears
 - **Real-time Alerts**: Flags suspicious activities with timestamps
 - **Dashboard**: Visual interface showing detection metrics and alerts
 - **Object Delection**: Object Detection: Detects prohibited objects (cell phone, book, etc.).
 - **Screen Recoding**: Continuously captures examinee's screen activity
 - **Audio Detection**: Monitors for voice/whispering in student's environment
 - **Alert Speaker**: Delivers real-time verbal warnings via text-to-speech
-- **Report Generation**: Creates detailed visual PDF and HTML reports with violations summary, heatmaps, and activity timeline  
+- **Report Generation**: Creates detailed visual PDF and HTML reports with violations summary, heatmaps, and activity timeline with non-overlapping point annotations  
+- **Dual Object Detection Modes**: Normal mode uses `YOLO26n` for speed, strict mode uses `RT-DETR` for higher precision.
 
 
 ## Technologies Used
@@ -79,6 +81,12 @@ detection:
     movement_threshold: 3     # consecutive frames
   multi_face:
     alert_threshold: 5        # frames
+  identity_verification:
+    enrollment_samples: 24    # enrollment baseline samples
+    check_interval: 10        # verify every N frames
+    distance_threshold: 0.45  # cosine distance mismatch threshold
+    mismatch_consecutive: 3   # trigger after N consecutive mismatches
+    min_face_confidence: 0.90 # clear single-face requirement
   objects:
     min_confidence: 0.65  # Detection confidence threshold
     detection_interval: 5 # frames between detections
@@ -170,6 +178,8 @@ python src/main.py --source uploads/interview_recording.mp4 --headless --disable
 | `--mode` | Session mode policy: `exam` (strict proctoring) or `interview` (speech allowed, no voice/mouth speaking violations). |
 | `--headless` | Runs the analysis without a Graphical User Interface (GUI). Disables OpenCV video display windows. Required for server-side or background execution. |
 | `--disable-audio` | Mutes all system audio alerts (e.g., text-to-speech warnings). Useful for silent batch processing. |
+| `--disable-objects` | Disables object detection entirely (best for maximum FPS / object checks not needed). |
+| `--strict-objects` | Enables strict object mode using RT-DETR backend. Default mode uses YOLO26n for speed. |
 | `--no-screen-recording` | Disables the screen capture functionality. Improves performance when only analyzing pre-recorded video files. |
 
 ### Interview Mode Example
@@ -178,6 +188,22 @@ For interviews where speaking is expected:
 python src/main.py --mode interview
 ```
 This keeps face/object/multi-face checks active but disables speaking-related violations.
+
+### Strict Object Detection Example
+For higher-precision object detection (phone/book), use strict mode:
+```bash
+python src/main.py --strict-objects
+```
+
+### Disable Object Detection Example
+If object checks are not required and you want the lowest latency:
+```bash
+python src/main.py --disable-objects
+```
+### Code Analysis Module
+
+On the dashboard, click the code analysis tab and paste the code. AI likelihood score will be calculated.
+For plag, add solution files in src/reference_solutions. 
 
 ## Start Fresh For New Candidate
 
@@ -192,14 +218,6 @@ Preview what will be deleted without deleting anything:
 ```bash
 python scripts/reset_candidate_session.py --dry-run
 ```
-## Interview mode
-
-Disables mouth movement and voice detection for interview environment
-
-```bash
-python src/main.py --mode interview
-```
-
 ## Troubleshooting
 Problem: Eye detection working, but not perfect
 
