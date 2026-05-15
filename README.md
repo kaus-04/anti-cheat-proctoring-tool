@@ -1,4 +1,4 @@
-# AI-Powered Online Exam/Interview Cheating Detection System
+# A.E.G.I.S. = Automated Exam Governance & Integrity System.
 
 <!-- ![System Demo](demo.gif) Add a demo gif later -->
 
